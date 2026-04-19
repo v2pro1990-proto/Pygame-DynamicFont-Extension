@@ -4,8 +4,8 @@ from setuptools.extension import Extension
 
 extensions = [
     Extension(
-        name="dynamic_font",              # Tên module khi bạn 'import'
-        sources=["dynamic_font_v2.pyx"], # File nguồn thực tế của bạn
+        name="dynamic_font",              
+        sources=["dynamic_font.pyx"], 
     )
 ]
 
