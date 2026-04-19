@@ -42,7 +42,7 @@ Ensure you have the following dependencies installed before compiling the `.pyx`
 ```bash
 pip install pygame-ce cython fonttools uharfbuzz emoji
 ```
-* **Python 3.14 or 3.8 (64-bit)
+* **Python 3.8 or later (64-bit)  ( Windows can use 32-64 )
 * **Pygame or Pygame-CE** (Recommended): The high-performance core graphics engine.
 * **Cython**: Required to compile the extension.
 * **fontTools**: For font cmap indexing and fallback detection.
