@@ -5,7 +5,7 @@ from setuptools.extension import Extension
 extensions = [
     Extension(
         name="dynamic_font",              
-        sources=["dynamic_font.pyx"], 
+        sources=["dynamic_font.pyx"],
     )
 ]
 
