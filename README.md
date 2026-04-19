@@ -27,9 +27,9 @@ Standard rendering methods in Pygame calculate typography and allocate new RAM f
 
 ```plaintext
 Pygame DynamicFont Extension/
-├── assets/                      # Assets bundle 
-├── dynamic_font.cp38-win_amd64.pyd  # For Python 3.8
-├── dynamic_font.cp314-win_amd64.pyd # For Python 3.14
+├── assets/fonts                      # Assets bundle 
+├── .github/workflow
+├── docs
 ├── dynamic_font.pyx  # Source code
 ├── .gitignore
 └── README.md

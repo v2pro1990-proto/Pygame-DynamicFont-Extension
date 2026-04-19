@@ -1,6 +1,18 @@
 name: Build Wheels For DynamicFont Extension
 
-on: [push, pull_request]
+on:
+  push:
+    branches: [ master, main ]
+    paths-ignore:
+      - 'README.md'
+      - 'docs/**'
+      - '.gitignore'
+      - 'LICENSE'
+  pull_request:
+    branches: [ master, main ]
+    paths-ignore:
+      - 'README.md'
+      - 'docs/**'
 
 jobs:
   build_wheels:
