@@ -2,6 +2,7 @@ from setuptools import setup
 from Cython.Build import cythonize
 from setuptools.extension import Extension
 
+
 extensions = [
     Extension(
         name="dynamic_font",              
@@ -9,6 +10,11 @@ extensions = [
     )
 ]
 
+
 setup(
-    ext_modules=cythonize(extensions, language_level="3"),
+    name="dynamic_font",                 
+    version="1.0.0",                       
+    author="v2pro1990",                    
+    description="Font rendering Extesion for Pygame and Pygame-CE",
+    ext_modules=cythonize(extensions, compiler_directives={'language_level': "3"}),
 )
