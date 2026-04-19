@@ -53,7 +53,7 @@ pip install pygame-ce cython fonttools uharfbuzz emoji
 
 ### 1. Engine Initialization
 
-1. Copy PYD and assets directory to your Project 
+1. Download the wheel package that matches your current Python version. and copy assets bundle to your project
 2. In Main .py, insert this:
 
 ```python
