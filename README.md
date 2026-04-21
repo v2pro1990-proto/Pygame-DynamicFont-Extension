@@ -24,7 +24,7 @@ Standard rendering methods in Pygame calculate typography and allocate new RAM f
 
 ![Comparison of pygame.font vs DynamicFont Extension](docs/DynamicFont_preview.png)
 
-## Folder Structure
+## 📁 Folder Structure
 ```plaintext
 Pygame DynamicFont Extension/
 ├── assets/fonts                      # Assets bundle 
