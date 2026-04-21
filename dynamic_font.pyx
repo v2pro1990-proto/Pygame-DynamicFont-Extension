@@ -577,7 +577,7 @@ cdef class DynamicFont:
         cdef list char_surfs = []
         cdef list char_advs = []
 
-        # 1. Lấy thông số chiều cao chuẩn
+        # Obtain standard height measurements.
         cdef tuple metrics = self._get_metrics(size)
         f_h = <double>metrics[1]
         final_h = <int>(f_h * 1.5)
@@ -646,7 +646,6 @@ cdef class DynamicFont:
             if final_w <= 0: final_w = 1
             surf = pygame.Surface((final_w, final_h), pygame.SRCALPHA)
             
-            # Áp dụng SMOOTH_FONT cho Emoji
             dy = (<int>(f_asc + 0.5) - old_font.get_ascent() - <int>(size * EMOJI_OFFSET_Y)) if SMOOTH_FONT else 0
             if dy < 0: dy = 0
             surf.blit(raw, (0, dy))
@@ -667,7 +666,7 @@ cdef class DynamicFont:
         if isinstance(font_path, (list, tuple)): real_path = font_path[0]
         else: real_path = font_path
             
-        # FIX FPS DROP: Cấp lại cơ chế Cache RAM y hệt V1 để ngắt hoàn toàn I/O Ổ cứng!
+        # FIX FPS DROP: Restore the RAM Cache mechanism exactly like V1 to completely disable hard drive I/O!
         cdef tuple pg_key = (real_path, size)
         if pg_key not in self._pg_font_cache:
             try: 
