@@ -40,7 +40,7 @@ Pygame DynamicFont Extension/
 Ensure you have the following dependencies installed before compiling the `.pyx` file:
 
 ```bash
-pip install pygame-ce cython fonttools uharfbuzz emoji
+pip install pygame-ce cython fonttools freetype-py uharfbuzz emoji
 ```
 * **Python 3.8 or later (64-bit)  ( Windows can use 32-64 )
 * **Pygame or Pygame-CE** (Recommended): The high-performance core graphics engine.
