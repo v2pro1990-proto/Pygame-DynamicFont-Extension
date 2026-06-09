@@ -44,6 +44,7 @@ pip install pygame-ce cython fonttools uharfbuzz emoji
 ```
 * **Python 3.8 or later (64-bit)  ( Windows can use 32-64 )
 * **Pygame or Pygame-CE** (Recommended): The high-performance core graphics engine.
+* **freetype-py** : To render RTL, shaping glyph and synthetic system
 * **Cython**: Required to compile the extension.
 * **fontTools**: For font cmap indexing and fallback detection.
 * **uharfbuzz**: For advanced text shaping and internationalization.
