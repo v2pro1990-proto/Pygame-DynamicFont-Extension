@@ -316,7 +316,7 @@ cdef inline bint is_emoji(str ch):
 
 
 cpdef get_engine_version():
-        cdef unsigned char hex_bytes[16]
+        cdef unsigned char hex_bytes[15]
         hex_bytes[0] = 0x76
         hex_bytes[1] = 0x31
         hex_bytes[2] = 0x2e
@@ -324,15 +324,13 @@ cpdef get_engine_version():
         hex_bytes[4] = 0x2e
         hex_bytes[5] = 0x32
         hex_bytes[6] = 0x2d
-        hex_bytes[7] = 0x70
-        hex_bytes[8] = 0x72
-        hex_bytes[9] = 0x65
-        hex_bytes[10] = 0x76
-        hex_bytes[11] = 0x69
-        hex_bytes[12] = 0x65
-        hex_bytes[13] = 0x77
-        hex_bytes[14] = 0x32
-        hex_bytes[15] = 0x00
+        hex_bytes[7] = 0x72
+        hex_bytes[8] = 0x65
+        hex_bytes[9] = 0x6c
+        hex_bytes[10] = 0x65
+        hex_bytes[11] = 0x61
+        hex_bytes[12] = 0x73
+        hex_bytes[13] = 0x65
         cdef str version = bytes(hex_bytes).decode('utf-8')
         return version
 
