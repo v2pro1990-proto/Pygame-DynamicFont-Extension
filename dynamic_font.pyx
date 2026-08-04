@@ -21,9 +21,16 @@ import emoji
 from fontTools.ttLib import TTFont, TTCollection
 import uharfbuzz as hb
 import freetype
+# FreeType load flags
+_FT_LOAD_RENDER     = 0x4
+_FT_LOAD_NO_HINTING = 0x2
+_FT_LOAD_AA         = _FT_LOAD_RENDER | _FT_LOAD_NO_HINTING  # = 6, antialiased
+_FT_LOAD_MONO       = _FT_LOAD_RENDER | 0x20000               # FT_LOAD_TARGET_MONO = (2<<16)
+_FT_LOAD_COLOR      = 0x100000
+_FT_LOAD_COLOR_RENDER = _FT_LOAD_COLOR | _FT_LOAD_RENDER
 import unicodedata
 from collections import OrderedDict
-import ctypes, ctypes.util, sys as _sys
+
 MODERN_FONT = True
 SMOOTH_FONT = True   # Enable/Disable baseline alignment
 ANTI_ALIAS = True
@@ -41,6 +48,7 @@ It can read the value of this variable to display the loading screen, avoiding t
 cdef bint _is_scanning = False
 # This tuple is initialized for comparison in the protection mechanism.
 # Load FreeType C-API cho synthetic embolden
+import ctypes, ctypes.util, sys as _sys
 _ft_lib = None
 try:
     if _sys.platform == "win32":
@@ -99,6 +107,18 @@ cdef tuple FONT_SUFFIXES = (
 cdef dict EMOJI_DATA_REF = emoji.EMOJI_DATA
 cdef dict _EMOJI_CACHE = {}
 
+# Configuration metadata for type validation
+cdef dict _CONFIG_VALIDATORS = {
+    "MODERN_FONT": (bool, "a Boolean value (True/False)"),
+    "SMOOTH_FONT": (bool, "a Boolean value (True/False)"),
+    "ANTI_ALIAS": (bool, "a Boolean value (True/False)"),
+    "EMOJI_OFFSET_Y": ((int, float), "a Float or Int value"),
+    "MAX_TEXT_CACHE": (int, "a positive Integer value"),
+    "TEXT_CACHE_CLEAN_COUNT": (int, "a positive Integer value"),
+    "MAX_GLYPH_CACHE": (int, "a positive Integer value"),
+    "GLYPH_CACHE_CLEAN_COUNT": (int, "a positive Integer value"),
+}
+
 pygame.freetype.init()
 
 
@@ -106,6 +126,27 @@ def is_scanning() -> bool:
     """Read-Only API: Returns the font scanning status of the Engine"""
     global _is_scanning
     return _is_scanning
+
+def _parse_font_input(name):
+    """Parse font input — có thể là:
+      - Tên font: "JetBrains Mono"      → (name, None)
+      - Path file: "assets/fonts/x.ttf" → ([path, -1], None)
+      - Path TTC:  "assets/fonts/x.ttc" → ([path, -1], None)
+      - Path TTC + index: ["assets/fonts/x.ttc", 2] → ([path, 2], None)
+    Returns: (resolved, is_path)
+    """
+    if isinstance(name, (list, tuple)):
+        # Đã là [path, index]
+        return list(name), True
+    if isinstance(name, str):
+        low = name.lower().strip()
+        if low.endswith((".ttf", ".otf", ".ttc")) or os.sep in name or "/" in name:
+            if low.endswith(".ttc"):
+                # TTC không có index → tự detect: dùng index 0 (face đầu tiên)
+                # User muốn face cụ thể thì truyền [path, index] trực tiếp
+                return [name, 0], True
+            return [name, -1], True
+    return name, False
 
 def get_family_root(font_name: str) -> str:
     name = font_name.strip()
@@ -314,6 +355,25 @@ cdef inline bint is_emoji(str ch):
     _EMOJI_CACHE[ch] = res
     return res
 
+# Classify group Function
+cdef inline int _classify_script(int code) noexcept:
+    """Classify language groups using inline functions at C-level."""
+    if 0x0590 <= code <= 0x05FF:
+        return 1  # Hebrew
+    if 0x0600 <= code <= 0x08FF or 0xFB50 <= code <= 0xFDFF or 0xFE70 <= code <= 0xFEFF:
+        return 2  # Arabic
+    if 0x0900 <= code <= 0x0DFF:
+        return 3  # Indic
+    if 0x0E00 <= code <= 0x0EFF:
+        return 4  # Thai
+    if 0x0F00 <= code <= 0x109F:
+        return 5  # Tibetan
+    if 0x1780 <= code <= 0x17FF:
+        return 6  # Khmer
+    if code == 0x20 or code == 0x00A0:
+        return 0  # Space
+    return 7  # Latin/CJK/Other
+
 
 cpdef get_engine_version():
         cdef unsigned char hex_bytes[15]
@@ -323,14 +383,15 @@ cpdef get_engine_version():
         hex_bytes[3] = 0x32
         hex_bytes[4] = 0x2e
         hex_bytes[5] = 0x32
-        hex_bytes[6] = 0x2d
-        hex_bytes[7] = 0x72
-        hex_bytes[8] = 0x65
-        hex_bytes[9] = 0x6c
-        hex_bytes[10] = 0x65
-        hex_bytes[11] = 0x61
-        hex_bytes[12] = 0x73
-        hex_bytes[13] = 0x65
+        hex_bytes[6] = 0x2e
+        hex_bytes[7] = 0x35
+        hex_bytes[8] = 0x2d
+        hex_bytes[9] = 0x70
+        hex_bytes[10] = 0x61
+        hex_bytes[11] = 0x74
+        hex_bytes[12] = 0x63
+        hex_bytes[13] = 0x68
+        hex_bytes[14] = 0x00
         cdef str version = bytes(hex_bytes).decode('utf-8')
         return version
 
@@ -339,6 +400,9 @@ cdef class DynamicFont:
     """(primary_name, fallback_name, fallback_dir, emoji_path, init_face)
     Intalize DynamicFont Object to Render -> Compas"""
     cdef str primary_name, fallback_name, fallback_dir, emoji_path
+    cdef object _primary_path   # [path, index] nếu primary là bundled file
+    cdef object _fallback_path  # [path, index] nếu fallback là bundled file
+    cdef bint _anti_alias       # set lúc init, không đổi runtime
     cdef dict _font_objs, _hb_fonts, _path_cache, _cmap_cache, _pg_font_cache
     cdef dict _std_metrics, _font_map, _path_resolve_cache
     cdef list _intl_font_paths
@@ -354,13 +418,31 @@ cdef class DynamicFont:
                  fallback_dir="assets/fonts/fallback", 
                  emoji_path="assets/fonts/NotoEmoji-Regular.ttf",
                  init_face="regular"):
-        
-        # 1. INPUT SANITIZATION: Automatically extract the root family name 
-        # to prevent path resolution errors if the user inputs a full name (e.g., "Segoe UI Bold").
-        self.primary_name = get_family_root(primary_name)
-        self.fallback_name = get_family_root(fallback_name)
-        self.fallback_dir = fallback_dir
-        self.emoji_path = emoji_path
+        # 1. INPUT SANITIZATION
+        # Detect nếu primary/fallback là path file bundled → không strip tên
+        cdef object _p_parsed, _f_parsed
+        cdef bint _p_is_path, _f_is_path
+        _p_parsed, _p_is_path = _parse_font_input(primary_name)
+        _f_parsed, _f_is_path = _parse_font_input(fallback_name)
+
+        if _p_is_path:
+            # primary_name là path file → lưu trực tiếp, bỏ qua get_family_root
+            self.primary_name   = _p_parsed[0]  # path string để nhận dạng
+            self._primary_path  = _p_parsed      # [path, index] để load
+        else:
+            self.primary_name   = get_family_root(primary_name)
+            self._primary_path  = None
+
+        if _f_is_path:
+            self.fallback_name  = _f_parsed[0]
+            self._fallback_path = _f_parsed
+        else:
+            self.fallback_name  = get_family_root(fallback_name)
+            self._fallback_path = None
+
+        self.fallback_dir  = fallback_dir
+        self.emoji_path    = emoji_path
+        self._anti_alias   = True  # snapshot từ ANTI_ALIAS lúc _ensure_init
         
         # 2. FACE EXTRACTION: Safely extract the font face if it was accidentally 
         # included in the primary_name parameter.
@@ -399,24 +481,26 @@ cdef class DynamicFont:
         self._font_map = load_or_update_font_map()
 
         cdef str check_p = ""
-        # Fetch the path using the default initialized face
-        cdef object check_f_path = self._get_true_path(self.fallback_name, self.init_face)
-        
-        # BYPASS LOGIC: If the standard fallback file doesn't exist on the disk, 
-        # clear its name to force the engine to bypass Layer 2 and jump to Layer 3.
-        if check_f_path:
-            if isinstance(check_f_path, (list, tuple)):
-                check_p = <str>check_f_path[0]
-            else:
-                check_p = <str>check_f_path
-            if not os.path.exists(check_p):
-                self.fallback_name = "" 
-                
+        cdef object check_f_path
+        # Nếu fallback là bundled path → skip system check
+        if self._fallback_path is None:
+            check_f_path = self._get_true_path(self.fallback_name, self.init_face)
+            if check_f_path:
+                if isinstance(check_f_path, (list, tuple)):
+                    check_p = <str>check_f_path[0]
+                else:
+                    check_p = <str>check_f_path
+                if not os.path.exists(check_p):
+                    self.fallback_name = ""
+
+
         # Load international fallback fonts (Layer 3)
         if os.path.exists(self.fallback_dir):
             self._intl_font_paths = [os.path.join(self.fallback_dir, f) 
                                      for f in os.listdir(self.fallback_dir) 
                                      if f.lower().endswith((".ttf", ".otf", ".ttc"))]
+        # Snapshot ANTI_ALIAS 1 lần — không đọc global mỗi render
+        self._anti_alias = <bint>ANTI_ALIAS
         self._initialized = True
 
     cdef object _get_old_engine(self, int size):
@@ -436,16 +520,27 @@ cdef class DynamicFont:
         cdef dict paths, names
         cdef str low_name, face_target1, face_target2, target
         cdef object result = None
+        cdef object _direct
 
         if not name: return None
-        
+
         key = (name, face)
         if key in self._path_resolve_cache:
             return self._path_resolve_cache[key]
-            
-        if os.path.exists(name): 
-            self._path_resolve_cache[key] = name
-            return name
+
+        # Bundled path: primary hoặc fallback được truyền trực tiếp là file
+        if self._primary_path and name == self._primary_path[0]:
+            self._path_resolve_cache[key] = self._primary_path
+            return self._primary_path
+        if self._fallback_path and name == self._fallback_path[0]:
+            self._path_resolve_cache[key] = self._fallback_path
+            return self._fallback_path
+
+        # Path file trực tiếp (không phải tên font)
+        if os.path.exists(name):
+            _direct = [name, -1]
+            self._path_resolve_cache[key] = _direct
+            return _direct
         
         paths = self._font_map.get("paths", {})
         low_name = name.lower()
@@ -471,10 +566,10 @@ cdef class DynamicFont:
         return _SYNTHETIC_FACE_MAP.get(face.lower(), (False, False))
 
     cdef bint _is_synthetic_needed(self, str name, str face, object actual_path=None):
-        """True = no actual font file → needs to be synthesized.
-        Logic: if _get_true_path(name, face) == _get_true_path(name, regular)
-        → no actual face found → needs to be synthesized.
-        actual_path: the rendering path, used to find the corresponding font_name.
+        """True = không có font file thật → cần synthetic.
+        Logic: nếu _get_true_path(name, face) == _get_true_path(name, regular)
+               → không tìm được face thật → cần synthetic.
+        actual_path: path đang render, dùng để tìm font_name tương ứng.
         """
         cdef object path_with_face, path_regular
         cdef str font_name
@@ -482,28 +577,28 @@ cdef class DynamicFont:
             return False
         if face.lower() not in _SYNTHETIC_FACE_MAP:
             return False
-        # Determine font_name from actual_path if available.
+        # Xác định font_name từ actual_path nếu có
         if actual_path is not None:
-            # Comparison: Path of the real face and path of the regular face
-            # If equal → no real face → synthetic is needed
-            # Use primary_name and fallback_name to check
+            # So sánh: path của face thật vs path của regular
+            # Nếu bằng nhau → không có face thật → cần synthetic
+            # Dùng primary_name và fallback_name để check
             path_with_face = self._get_true_path(self.primary_name, face)
             path_regular   = self._get_true_path(self.primary_name, self.init_face)
             if path_with_face != path_regular:
-                # Primary has a real face.
-                # Check if actual_path is primary
+                # Primary có face thật
+                # Check actual_path có phải primary không
                 if actual_path == path_with_face or actual_path == path_regular:
-                    return False  # Currently using primary → not synthetic
+                    return False  # Đang dùng primary → không synthetic
             path_with_face = self._get_true_path(self.fallback_name, face)
             path_regular   = self._get_true_path(self.fallback_name, self.init_face)
             if path_with_face != path_regular:
-                # # Fallback font has a real face
+                # Fallback có face thật
                 if actual_path == path_with_face or actual_path == path_regular:
-                    return False  # Currently using fallback → not synthetic
-            # actual_path not belonging to primary/fallback (intl font) → check separately
-            # Intl fonts usually only have 1 face → always need synthetic
+                    return False  # Đang dùng fallback → không synthetic
+            # actual_path không thuộc primary/fallback (intl font) → check riêng
+            # Intl font thường chỉ có 1 face → luôn cần synthetic
             return True
-        # No actual_path → check by name
+        # Không có actual_path → check theo name
         if not name:
             return False
         path_with_face = self._get_true_path(name, face)
@@ -599,19 +694,20 @@ cdef class DynamicFont:
         try:
             # Use pygame.freetype instead of pygame.font
             if real_path.lower().endswith(".ttc"):
-                # FreeType supports font_index directly and is extremely stable.
-                # FreeType handles file reading very well.
-                f_obj = pygame.freetype.Font(real_path, size, font_index=index)
+                # TTC: dùng index nếu có, mặc định 0 nếu không
+                f_obj = pygame.freetype.Font(real_path, size, font_index=max(0, index))
             else:
+                # TTF/OTF: không truyền font_index
                 f_obj = pygame.freetype.Font(real_path, size)
                 
             # Additional configuration to make the font look better (optional)
-            f_obj.antialiased = ANTI_ALIAS
+            f_obj.antialiased = self._anti_alias
             f_obj.use_bitmap_strikes = True
             #f_obj.origin = True
 
-            # Synthetic Bold/Italic: Apply when neither primary nor fallback has a true font file for this face.
-            # If you don't know the font_name, check both primary and fallback.
+            # Synthetic Bold/Italic: apply khi cả primary lẫn fallback
+            # đều không có font file thật cho face này
+            # Nếu không biết font_name, check cả primary lẫn fallback
             if face and self._is_synthetic_needed("", face, path_data):
                 syn_flags  = self._get_synthetic_flags(face)
                 syn_bold   = <bint>syn_flags[0]
@@ -628,7 +724,7 @@ cdef class DynamicFont:
             try:
                 # Use FreeType's SysFont to synchronize object types
                 f_obj = pygame.freetype.SysFont("arial", size)
-                f_obj.antialiased = ANTI_ALIAS
+                f_obj.antialiased = True
                 return f_obj
             except:
                 # If even the system doesn't have Arial, use Pygame's default font.
@@ -681,7 +777,7 @@ cdef class DynamicFont:
 
         if is_emoji(ch):
             old_font = self._get_old_engine(size)
-            surf_raw = old_font.render(ch, ANTI_ALIAS, (255, 255, 255))
+            surf_raw = old_font.render(ch, self._anti_alias, (255, 255, 255))
             target_h = f_asc * 1.1
             ratio = 1.0
             if surf_raw.get_height() != int(target_h):
@@ -711,7 +807,14 @@ cdef class DynamicFont:
             
             surf = pygame.Surface((final_w, final_h), pygame.SRCALPHA)
             draw_x = -<int>rect.x if <int>rect.x < 0 else 0
-            font_obj.render_to(surf, (draw_x, baseline_y), ch, color, size=size)
+            if self._anti_alias:
+                font_obj.render_to(surf, (draw_x, baseline_y), ch, color, size=size)
+            else:
+                font_obj.antialiased = False
+                glyph_surf, _ = font_obj.render(ch, color, size=size)
+                font_obj.antialiased = True
+                surf.blit(glyph_surf, (draw_x, baseline_y - <int>(f_asc + 0.5)))
+            font_obj.origin = False
             font_obj.origin = False
             
             actual_step = final_w
@@ -772,7 +875,7 @@ cdef class DynamicFont:
                     font_data = f.read()
                 
                 # HarfBuzz Face supports the index parameter to select fonts from a .ttc collection.
-                face = hb.Face(font_data, index)
+                face = hb.Face(font_data, max(0, index))
                 hb_font = hb.Font(face)
                 
                 # Save the entire set so that font_data is not freed from memory (avoid segfault errors)
@@ -786,8 +889,9 @@ cdef class DynamicFont:
 
     cdef object _render_shaped_run(self, str text, int size, tuple color, object font_path, str face):
         """
-        Advanced Shaper Engine: Uses HarfBuzz to compute complex cursive scripts (Arabic) 
-        and accurately renders them using FreeType bitmaps.
+        Performance-optimized version:
+        - Uses a static color mapping table for 256 Alpha values ​​to avoid calling `surf.map_rgb` in the pixel loop.
+        - Casts PixelArray to Cython 2D Typed Memoryview to perform direct pixel overwrite operations at the C level.
         """
         cdef object hb_font, buf, raw, surf, old_font, face_obj, px_array
         cdef double f_asc, f_h, scale, cur_x, min_x, max_x, glyph_x, glyph_right, logical_x1, logical_x2, start_x
@@ -805,16 +909,21 @@ cdef class DynamicFont:
         cdef int logic_w = 0
         cdef double total_adv = 0.0
 
+        # Declaring variables for optimization using C native
+        cdef unsigned int mapped_colors[256]
+        cdef int a
+        cdef unsigned int[:, :] px_view
+
         metrics = self._get_metrics(size, face)
         f_asc = <double>metrics[0]
         f_h = <double>metrics[1]
         baseline_y = <int>(f_asc + 0.5)
         final_h = <int>(f_h * 1.5)
         
-        # Pre-process emoji runs falling into the shaping pipeline
+        # Quickly process emojis if the emoji font matches.
         if isinstance(font_path, (list, tuple)) and font_path[0] == self.emoji_path or font_path == self.emoji_path:
             old_font = self._get_old_engine(size)
-            raw = old_font.render(text, ANTI_ALIAS, (255, 255, 255))
+            raw = old_font.render(text, self._anti_alias, (255, 255, 255))
             final_w = raw.get_width()
             if final_w <= 0: final_w = 1
             surf = pygame.Surface((final_w, final_h), pygame.SRCALPHA)
@@ -834,7 +943,7 @@ cdef class DynamicFont:
         if hb_font is None:
             return pygame.Surface((1, final_h), pygame.SRCALPHA), 1
 
-        # HarfBuzz Buffer Initialization
+        # Creating and formatting text using HarfBuzz
         buf = hb.Buffer()
         buf.add_str(text)
         buf.guess_segment_properties()
@@ -844,31 +953,28 @@ cdef class DynamicFont:
         ft_key = ("FT", real_path, index, size, face)
         if ft_key not in self._font_objs:
             try:
-                face_obj = freetype.Face(real_path, index)
+                face_obj = freetype.Face(real_path, max(0, index))
                 face_obj.set_pixel_sizes(0, size)
-                # Synthetic bold/italic fonts can be used with FreeType if the actual font file is unavailable.
-                if self._is_synthetic_needed("", face, font_path):
-                    syn_flags = self._get_synthetic_flags(face)
                 self._font_objs[ft_key] = face_obj
             except Exception:
                 return pygame.Surface((1, final_h), pygame.SRCALPHA), 1
 
         face_obj = self._font_objs[ft_key]
 
-        # Pre-compute synthetic flags once — avoid calling each glyph function
         cdef bint _syn_bold = False, _syn_italic = False
         cdef tuple _syn_flags
+        cdef bint _aa = self._anti_alias
         if face and self._is_synthetic_needed("", face, font_path):
             _syn_flags = self._get_synthetic_flags(face)
             _syn_bold   = <bint>_syn_flags[0]
             _syn_italic = <bint>_syn_flags[1]
 
-        # CORE MATH: Original, highly accurate V4.9 coordinate synchronization loop
         cur_x = 0.0
         min_x = 999999.0
         max_x = -999999.0
         glyph_render_data = []
 
+        # Collect data from FreeType based on coordinate results from HarfBuzz
         for info, pos in zip(buf.glyph_infos, buf.glyph_positions):
             glyph_id = info.codepoint
             x_adv = pos.x_advance * scale
@@ -878,27 +984,18 @@ cdef class DynamicFont:
             base_x = cur_x
             cur_x += x_adv
 
-            # =========================================================================
-            # THE MAGIC LIVES HERE: FLAG 6 (NO_HINTING + RENDER)
-            # Forces FreeType to disable hinting, synchronizing perfectly with HarfBuzz!
-            # =========================================================================
             if (_syn_bold or _syn_italic) and _ft_lib is not None:
-                # Step 1: Load outline WITHOUT rendering (flag 2 = FT_LOAD_NO_HINTING)
-                face_obj.load_glyph(glyph_id, 2)
-                # Step 2: Modify the outline via C-API
+                face_obj.load_glyph(glyph_id, _FT_LOAD_NO_HINTING)
                 _slot_ptr = ctypes.cast(face_obj.glyph._FT_GlyphSlot, ctypes.c_void_p)
                 if _syn_bold:   _FT_GlyphSlot_Embolden(_slot_ptr)
                 if _syn_italic: _FT_GlyphSlot_Oblique(_slot_ptr)
-                # Step 3: Render the bitmap from the modified outline.
-                face_obj.glyph.render(freetype.FT_RENDER_MODE_NORMAL)
+                face_obj.glyph.render(freetype.FT_RENDER_MODE_NORMAL if _aa else 2)
             else:
-                # Normal path: load and render simultaneously
-                face_obj.load_glyph(glyph_id, 6)
+                face_obj.load_glyph(glyph_id, _FT_LOAD_AA if _aa else _FT_LOAD_MONO)
 
             w_bmp = face_obj.glyph.bitmap.width
             h_bmp = face_obj.glyph.bitmap.rows
             pitch = face_obj.glyph.bitmap.pitch
-
             left = face_obj.glyph.bitmap_left
             top = face_obj.glyph.bitmap_top
 
@@ -935,9 +1032,16 @@ cdef class DynamicFont:
 
         surf = pygame.Surface((final_w, final_h), pygame.SRCALPHA)
         r = color[0]; g = color[1]; b = color[2]
-        px_array = pygame.PixelArray(surf)
+        
+        # OPTIMIZATION 1: Pre-calc 32-bit color format for all 256 Alpha values
+        for a in range(256):            
+            mapped_colors[a] = <unsigned int>(<long>surf.map_rgb(r, g, b, a))
 
-        # Alpha Blending Rendering Loop
+        px_array = pygame.PixelArray(surf)
+        # OPTIMIZATION 2: Cast PixelArray to 2D MemoryView unsigned integer type at C-level
+        px_view = px_array
+
+        # Draw glyphs onto the surface using C-speed loops
         for g_data in glyph_render_data:
             w_bmp = g_data[1]
             if w_bmp <= 0: continue
@@ -950,22 +1054,35 @@ cdef class DynamicFont:
             draw_x = g_data[6] + g_data[4] + start_x
             draw_y = baseline_y - g_data[5] - g_data[7]
 
-            for bmp_y in range(h_bmp):
-                for bmp_x in range(w_bmp):
-                    if pitch > 0:
-                        p_idx = bmp_y * pitch + bmp_x
-                    else:
-                        p_idx = (h_bmp - 1 - bmp_y) * abs_pitch + bmp_x
+            if _aa:
+                for bmp_y in range(h_bmp):
+                    for bmp_x in range(w_bmp):
+                        if pitch > 0:
+                            p_idx = bmp_y * pitch + bmp_x
+                        else:
+                            p_idx = (h_bmp - 1 - bmp_y) * abs_pitch + bmp_x
+                        alpha_val = bmp_buffer[p_idx]
+                        if alpha_val > 0:
+                            px = <int>(draw_x + bmp_x + 0.5)
+                            py = <int>(draw_y + bmp_y + 0.5)
+                            if 0 <= px < final_w and 0 <= py < final_h:
+                                # Assign color values ​​directly from a pre-existing spreadsheet to the cache
+                                px_view[px, py] = mapped_colors[alpha_val]
+            else:
+                for bmp_y in range(h_bmp):
+                    for bmp_x in range(w_bmp):
+                        if pitch > 0:
+                            p_idx = bmp_y * pitch + bmp_x // 8
+                        else:
+                            p_idx = (h_bmp - 1 - bmp_y) * abs_pitch + bmp_x // 8
+                        alpha_val = 255 if (bmp_buffer[p_idx] >> (7 - (bmp_x & 7))) & 1 else 0
+                        if alpha_val > 0:
+                            px = <int>(draw_x + bmp_x + 0.5)
+                            py = <int>(draw_y + bmp_y + 0.5)
+                            if 0 <= px < final_w and 0 <= py < final_h:
+                                px_view[px, py] = mapped_colors[alpha_val]
 
-                    alpha_val = bmp_buffer[p_idx]
-
-                    if alpha_val > 0:
-                        px = <int>(draw_x + bmp_x + 0.5)
-                        py = <int>(draw_y + bmp_y + 0.5)
-                        if 0 <= px < final_w and 0 <= py < final_h:
-                            px_array[px, py] = (r, g, b, alpha_val)
-
-        del px_array
+        del px_array  # Unlock the surface lock of PixelArray
         return surf, logic_w
 
     cpdef render(self, str text, int size, tuple color=(255, 255, 255), bint dynamic=False, str face=""): #Convert def to cpdef
@@ -1114,15 +1231,8 @@ cdef class DynamicFont:
                 i += 1
                 continue
 
-            # Script Group Classification
-            if 0x0590 <= code <= 0x05FF: script_group = 1
-            elif 0x0600 <= code <= 0x08FF or 0xFB50 <= code <= 0xFDFF or 0xFE70 <= code <= 0xFEFF: script_group = 2
-            elif 0x0900 <= code <= 0x0DFF: script_group = 3
-            elif 0x0E00 <= code <= 0x0EFF: script_group = 4
-            elif 0x0F00 <= code <= 0x109F: script_group = 5
-            elif 0x1780 <= code <= 0x17FF: script_group = 6
-            elif code in (0x20, 0x00A0): script_group = 0 
-            else: script_group = 7
+            # Script Group Classification ( Now will be intersect to _classify_script func )
+            script_group = _classify_script(code)
 
             is_inheritable = (cat.startswith('M') or cat == 'Cf')
 
@@ -1196,7 +1306,7 @@ cdef class DynamicFont:
         total_logic_w = 0
         for r_text, r_path, r_color, _, r_face in runs:
             if r_text:
-                # Use r_face (the active_face of run) instead of the default face.
+                # Dùng r_face (active_face của run) thay vì face mặc định
                 s, w_adv = self._render_shaped_run(r_text, size, r_color, r_path, r_face)
             else: 
                 continue
@@ -1244,18 +1354,18 @@ cdef class DynamicFont:
         """
         Returns detailed per-character rendering metadata.
         Fields per character:
-        char: root character
-        hex: Unicode codepoint (U+XXXX)
-        category: Unicode category (Lu, Ll, Lo, ...)
-        script: script group (Latin/CJK/Arabic/Hebrew/Indic/Thai/Tibetan/Khmer)
-        font_file: actual font file name
-        font_source: PRIMARY / FALLBACK / EMOJI / MISSING
-        ttc_index: index in TTC (-1 if TTF is regular)
-        has_glyph: glyph exists in the font
-        synthetic: NONE / BOLD / ITALIC / BOLD+ITALIC
-        render_path: SHAPED / SIMPLE / CHAR (predicted from script)
-        tag_context: active face tag (if inline tag exists)
-        is_tag: True if this character is part of an inline tag (skipped during rendering)
+          char        : ký tự gốc
+          hex         : Unicode codepoint (U+XXXX)
+          category    : Unicode category (Lu, Ll, Lo, ...)
+          script      : script group (Latin/CJK/Arabic/Hebrew/Indic/Thai/Tibetan/Khmer)
+          font_file   : tên file font thực tế
+          font_source : PRIMARY / FALLBACK / EMOJI / MISSING
+          ttc_index   : index trong TTC (-1 nếu TTF thường)
+          has_glyph   : glyph có tồn tại trong font không
+          synthetic   : NONE / BOLD / ITALIC / BOLD+ITALIC
+          render_path : SHAPED / SIMPLE / CHAR (dự đoán từ script)
+          tag_context : face tag đang active (nếu có inline tag)
+          is_tag      : True nếu char này là một phần của inline tag (bị skip khi render)
         """
         self._ensure_init()
 
@@ -1279,20 +1389,20 @@ cdef class DynamicFont:
             3: "Indic", 4: "Thai", 5: "Tibetan",
             6: "Khmer", 7: "Latin/CJK"
         }
-        # Predicted render path from script group
+        # Render path dự đoán từ script group
         _RENDER_PATH = {
             0: "SIMPLE", 1: "SHAPED", 2: "SHAPED",
             3: "SHAPED", 4: "SHAPED", 5: "SHAPED",
             6: "SHAPED", 7: "SIMPLE"
         }
 
-        active_face = face  # Font face is active based on inline tags.
+        active_face = face  # face đang active theo inline tag
 
         while i < n:
             ch   = text[i]
             code = ord(ch)
 
-            # --- Parse inline tags (mark, no add to info) ---
+            # --- Parse inline tags (đánh dấu, không thêm vào info) ---
             # Tag ^X (color)
             if code == 0x5E and i + 1 < n and (text[i+1] in RICH_PALETTE or text[i+1] == 'r'):
                 info.append({
@@ -1315,7 +1425,7 @@ cdef class DynamicFont:
                         active_face = text[i+2:eq_idx].lower().strip()
                     else:
                         active_face = text[i+1:eq_idx].lower().strip()
-                    # Find closing }
+                    # Tìm closing }
 
 
 
@@ -1331,7 +1441,7 @@ cdef class DynamicFont:
 
             # Tag }> (close face tag)
             if code == 0x7D and i + 1 < n and text[i+1] == '>':
-                active_face = face  # reset to original face
+                active_face = face  # reset về face gốc
                 info.append({
                     "char": " ", "hex": "TAG",
                     "category": "TAG", "script": "-",
@@ -1343,7 +1453,7 @@ cdef class DynamicFont:
                 })
                 i += 2; continue
 
-            # --- Normal char ---
+            # --- Ký tự thường ---
             cat          = unicodedata.category(ch)
             if code == 0x20 or code == 0x00A0:   script_group = 0
             elif 0x0590 <= code <= 0x05FF:        script_group = 1
@@ -1369,7 +1479,7 @@ cdef class DynamicFont:
                 fname = os.path.basename(real_path)
                 has_g = self._has_glyph(path, code)
 
-                # Identify the source
+                # Xác định source
                 primary_p = self._get_true_path(self.primary_name, active_face)
                 fallback_p = self._get_true_path(self.fallback_name, active_face)
                 emoji_p    = getattr(self, '_emoji_path', None)
@@ -1431,8 +1541,31 @@ class _ProtectedEngine(types.ModuleType):
         if name in PROTECTED_VARS:
             print(f"[WARNING]: The variable '{name}' is a protected local variable ( Read-Only ). Ignoring the action of overwriting its value...")
             return 
+
+        # Validate the type and logical range of the exported configuration variables
+        if name in _CONFIG_VALIDATORS:
+            expected_type, msg = _CONFIG_VALIDATORS[name]
             
-        # 1.2 Configurations (SMOOTH_FONT, MODERN_FONT...) can be assigned freely.
+            # Strict check for boolean (since isinstance(True, int) is True in Python)
+            if expected_type is bool:
+                if not isinstance(value, bool):
+                    print(f"[WARNING]: Invalid value for '{name}'. It must be {msg}. Ignoring this assignment...")
+                    return
+            else:
+                if not isinstance(value, expected_type):
+                    print(f"[WARNING]: Invalid value for '{name}'. It must be {msg}. Ignoring this assignment...")
+                    return
+                
+                # Prevent negative or zero values for cache configurations
+                if expected_type is int and value <= 0:
+                    print(f"[WARNING]: Invalid value for '{name}'. It must be greater than 0. Ignoring this assignment...")
+                    return
+
+                # Prevent extreme values for Emoji offset
+                if name == "EMOJI_OFFSET_Y" and not (-2.0 <= value <= 2.0):
+                    print(f"[WARNING]: Invalid value for '{name}'. Value is outside of safe range (-2.0 to 2.0). Ignoring this assignment...")
+                    return
+            
         super().__setattr__(name, value)
 
     #2. ANTI-DELETION LOGIC
