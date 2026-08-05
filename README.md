@@ -125,8 +125,21 @@ Requirements:
 
 ## ☕ Support & Maintenance
 
-DynamicFont is an open-source labor of love aimed at solving a 20-year-old framework limitation. If this extension powers your software, saves your frame rates, and improves your workflow, consider supporting its continued development! 
-- Donate options is Comming Soon !
+DynamicFont is an open-source labor of love aimed at solving a 20-year-old
+framework limitation. If this extension powers your software, saves your
+frame rates, and improves your workflow, consider supporting its continued
+development!
+
+- 🇻🇳 **Vietnam supporters:** [SociaBuzz](https://sociabuzz.com/v2pro1990-proto/donate) — ZaloPay, bank
+  transfer, and other local payment methods.
+- 🌍 **International supporters:** the same [SociaBuzz](https://sociabuzz.com/v2pro1990-proto/donate)
+  page currently only accepts crypto for non-Vietnam accounts. This isn't
+  by choice — mainstream options like Stripe/PayPal don't currently support
+  payouts to Vietnamese personal bank accounts, so broader international
+  support isn't available yet.
+- Have a workaround, a platform that works well for your region, or just
+  want to help figure this out together? Open a
+  [Discussion](https://github.com/v2pro1990-proto/Pygame-DynamicFont-Extension/discussions) — genuinely open to ideas.
 
 
 ## 📄 License
