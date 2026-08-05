@@ -1,7 +1,11 @@
 from setuptools import setup
 from Cython.Build import cythonize
 from setuptools.extension import Extension
+from pathlib import Path
 
+
+_THIS_DIR = Path(__file__).parent
+_LONG_DESCRIPTION = (_THIS_DIR / "README.md").read_text(encoding="utf-8")
 
 extensions = [
     Extension(
@@ -13,15 +17,25 @@ extensions = [
 
 setup(
     name="dynamic_font",                 
-    version="1.2.2.5",                       
+    version="1.2.2.6",
     author="v2pro1990",                    
-    description="Font rendering Extesion for Pygame and Pygame-CE",
-    # pygame/pygame-ce intentionally NOT listed here — anyone installing
-    # a pygame extension already has pygame or pygame-ce in their project
-    # (that's the whole reason they need this). Auto-installing it could
-    # even conflict with an existing pygame-ce setup, since "pygame" and
-    # "pygame-ce" are separate PyPI packages that both provide the same
-    # top-level "pygame" import name.
+    description="Fast text and emoji rendering extension for Pygame and Pygame-CE",
+    long_description=_LONG_DESCRIPTION,
+    long_description_content_type="text/markdown",
+    url="https://github.com/v2pro1990-proto/Pygame-DynamicFont-Extension",
+    project_urls={
+        "Source": "https://github.com/v2pro1990-proto/Pygame-DynamicFont-Extension",
+        "Bug Tracker": "https://github.com/v2pro1990-proto/Pygame-DynamicFont-Extension/issues",
+    },
+    classifiers=[
+        "Programming Language :: Python :: 3",
+        "Programming Language :: Cython",
+        "Topic :: Multimedia :: Graphics",
+        "Topic :: Software Development :: Libraries :: pygame",
+        "Intended Audience :: Developers",
+        "License :: OSI Approved :: MIT License",
+    ],
+    keywords=["pygame", "pygame-ce", "font", "text rendering", "emoji", "cython"],
     install_requires=[
         "fonttools",
         "freetype-py",
