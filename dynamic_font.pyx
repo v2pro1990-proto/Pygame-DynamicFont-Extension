@@ -128,22 +128,22 @@ def is_scanning() -> bool:
     return _is_scanning
 
 def _parse_font_input(name):
-    """Parse font input — có thể là:
-      - Tên font: "JetBrains Mono"      → (name, None)
+    """Parse font input — can be:
+      - Font name: "JetBrains Mono"      → (name, None)
       - Path file: "assets/fonts/x.ttf" → ([path, -1], None)
       - Path TTC:  "assets/fonts/x.ttc" → ([path, -1], None)
       - Path TTC + index: ["assets/fonts/x.ttc", 2] → ([path, 2], None)
     Returns: (resolved, is_path)
     """
     if isinstance(name, (list, tuple)):
-        # Đã là [path, index]
+        # Already [path, index]
         return list(name), True
     if isinstance(name, str):
         low = name.lower().strip()
         if low.endswith((".ttf", ".otf", ".ttc")) or os.sep in name or "/" in name:
             if low.endswith(".ttc"):
-                # TTC không có index → tự detect: dùng index 0 (face đầu tiên)
-                # User muốn face cụ thể thì truyền [path, index] trực tiếp
+                # TTC without index → auto-detect: use index 0 (first face)
+                # If user wants a specific face, pass [path, index] directly
                 return [name, 0], True
             return [name, -1], True
     return name, False
@@ -400,9 +400,9 @@ cdef class DynamicFont:
     """(primary_name, fallback_name, fallback_dir, emoji_path, init_face)
     Intalize DynamicFont Object to Render -> Compas"""
     cdef str primary_name, fallback_name, fallback_dir, emoji_path
-    cdef object _primary_path   # [path, index] nếu primary là bundled file
-    cdef object _fallback_path  # [path, index] nếu fallback là bundled file
-    cdef bint _anti_alias       # set lúc init, không đổi runtime
+    cdef object _primary_path   # [path, index] if primary is a bundled file
+    cdef object _fallback_path  # [path, index] if fallback is a bundled file
+    cdef bint _anti_alias       # set at init, does not change at runtime
     cdef dict _font_objs, _hb_fonts, _path_cache, _cmap_cache, _pg_font_cache
     cdef dict _std_metrics, _font_map, _path_resolve_cache
     cdef list _intl_font_paths
@@ -419,16 +419,16 @@ cdef class DynamicFont:
                  emoji_path="assets/fonts/NotoEmoji-Regular.ttf",
                  init_face="regular"):
         # 1. INPUT SANITIZATION
-        # Detect nếu primary/fallback là path file bundled → không strip tên
+        # Detect if primary/fallback is a bundled file path → don't strip the name
         cdef object _p_parsed, _f_parsed
         cdef bint _p_is_path, _f_is_path
         _p_parsed, _p_is_path = _parse_font_input(primary_name)
         _f_parsed, _f_is_path = _parse_font_input(fallback_name)
 
         if _p_is_path:
-            # primary_name là path file → lưu trực tiếp, bỏ qua get_family_root
-            self.primary_name   = _p_parsed[0]  # path string để nhận dạng
-            self._primary_path  = _p_parsed      # [path, index] để load
+            # primary_name is a file path → store directly, skip get_family_root
+            self.primary_name   = _p_parsed[0]  # path string for identification
+            self._primary_path  = _p_parsed      # [path, index] to load
         else:
             self.primary_name   = get_family_root(primary_name)
             self._primary_path  = None
@@ -442,7 +442,7 @@ cdef class DynamicFont:
 
         self.fallback_dir  = fallback_dir
         self.emoji_path    = emoji_path
-        self._anti_alias   = True  # snapshot từ ANTI_ALIAS lúc _ensure_init
+        self._anti_alias   = True  # snapshot from ANTI_ALIAS at _ensure_init
         
         # 2. FACE EXTRACTION: Safely extract the font face if it was accidentally 
         # included in the primary_name parameter.
@@ -482,7 +482,7 @@ cdef class DynamicFont:
 
         cdef str check_p = ""
         cdef object check_f_path
-        # Nếu fallback là bundled path → skip system check
+        # If fallback is a bundled path → skip system check
         if self._fallback_path is None:
             check_f_path = self._get_true_path(self.fallback_name, self.init_face)
             if check_f_path:
@@ -499,7 +499,7 @@ cdef class DynamicFont:
             self._intl_font_paths = [os.path.join(self.fallback_dir, f) 
                                      for f in os.listdir(self.fallback_dir) 
                                      if f.lower().endswith((".ttf", ".otf", ".ttc"))]
-        # Snapshot ANTI_ALIAS 1 lần — không đọc global mỗi render
+        # Snapshot ANTI_ALIAS once — don't read the global on every render
         self._anti_alias = <bint>ANTI_ALIAS
         self._initialized = True
 
@@ -528,7 +528,7 @@ cdef class DynamicFont:
         if key in self._path_resolve_cache:
             return self._path_resolve_cache[key]
 
-        # Bundled path: primary hoặc fallback được truyền trực tiếp là file
+        # Bundled path: primary or fallback passed directly as a file
         if self._primary_path and name == self._primary_path[0]:
             self._path_resolve_cache[key] = self._primary_path
             return self._primary_path
@@ -536,7 +536,7 @@ cdef class DynamicFont:
             self._path_resolve_cache[key] = self._fallback_path
             return self._fallback_path
 
-        # Path file trực tiếp (không phải tên font)
+        # Direct file path (not a font name)
         if os.path.exists(name):
             _direct = [name, -1]
             self._path_resolve_cache[key] = _direct
@@ -566,10 +566,10 @@ cdef class DynamicFont:
         return _SYNTHETIC_FACE_MAP.get(face.lower(), (False, False))
 
     cdef bint _is_synthetic_needed(self, str name, str face, object actual_path=None):
-        """True = không có font file thật → cần synthetic.
+        """True = no real font file → synthetic needed.
         Logic: nếu _get_true_path(name, face) == _get_true_path(name, regular)
-               → không tìm được face thật → cần synthetic.
-        actual_path: path đang render, dùng để tìm font_name tương ứng.
+               → no real face found → synthetic needed.
+        actual_path: the path currently being rendered, used to find the matching font_name.
         """
         cdef object path_with_face, path_regular
         cdef str font_name
@@ -577,28 +577,28 @@ cdef class DynamicFont:
             return False
         if face.lower() not in _SYNTHETIC_FACE_MAP:
             return False
-        # Xác định font_name từ actual_path nếu có
+        # Determine font_name from actual_path if available
         if actual_path is not None:
-            # So sánh: path của face thật vs path của regular
-            # Nếu bằng nhau → không có face thật → cần synthetic
-            # Dùng primary_name và fallback_name để check
+            # Compare: real face's path vs regular's path
+            # If equal → no real face → synthetic needed
+            # Use primary_name and fallback_name to check
             path_with_face = self._get_true_path(self.primary_name, face)
             path_regular   = self._get_true_path(self.primary_name, self.init_face)
             if path_with_face != path_regular:
-                # Primary có face thật
-                # Check actual_path có phải primary không
+                # Primary has a real face
+                # Check whether actual_path is primary
                 if actual_path == path_with_face or actual_path == path_regular:
-                    return False  # Đang dùng primary → không synthetic
+                    return False  # Using primary → not synthetic
             path_with_face = self._get_true_path(self.fallback_name, face)
             path_regular   = self._get_true_path(self.fallback_name, self.init_face)
             if path_with_face != path_regular:
-                # Fallback có face thật
+                # Fallback has a real face
                 if actual_path == path_with_face or actual_path == path_regular:
-                    return False  # Đang dùng fallback → không synthetic
-            # actual_path không thuộc primary/fallback (intl font) → check riêng
-            # Intl font thường chỉ có 1 face → luôn cần synthetic
+                    return False  # Using fallback → not synthetic
+            # actual_path doesn't belong to primary/fallback (intl font) → check separately
+            # Intl fonts usually have only 1 face → always needs synthetic
             return True
-        # Không có actual_path → check theo name
+        # No actual_path → check by name
         if not name:
             return False
         path_with_face = self._get_true_path(name, face)
@@ -694,10 +694,10 @@ cdef class DynamicFont:
         try:
             # Use pygame.freetype instead of pygame.font
             if real_path.lower().endswith(".ttc"):
-                # TTC: dùng index nếu có, mặc định 0 nếu không
+                # TTC: use index if available, default to 0 if not
                 f_obj = pygame.freetype.Font(real_path, size, font_index=max(0, index))
             else:
-                # TTF/OTF: không truyền font_index
+                # TTF/OTF: don't pass font_index
                 f_obj = pygame.freetype.Font(real_path, size)
                 
             # Additional configuration to make the font look better (optional)
@@ -705,9 +705,9 @@ cdef class DynamicFont:
             f_obj.use_bitmap_strikes = True
             #f_obj.origin = True
 
-            # Synthetic Bold/Italic: apply khi cả primary lẫn fallback
-            # đều không có font file thật cho face này
-            # Nếu không biết font_name, check cả primary lẫn fallback
+            # Synthetic Bold/Italic: apply when both primary and fallback
+            # have no real font file for this face
+            # If font_name is unknown, check both primary and fallback
             if face and self._is_synthetic_needed("", face, path_data):
                 syn_flags  = self._get_synthetic_flags(face)
                 syn_bold   = <bint>syn_flags[0]
@@ -1306,7 +1306,7 @@ cdef class DynamicFont:
         total_logic_w = 0
         for r_text, r_path, r_color, _, r_face in runs:
             if r_text:
-                # Dùng r_face (active_face của run) thay vì face mặc định
+                # Use r_face (the run's active_face) instead of the default face
                 s, w_adv = self._render_shaped_run(r_text, size, r_color, r_path, r_face)
             else: 
                 continue
@@ -1354,18 +1354,18 @@ cdef class DynamicFont:
         """
         Returns detailed per-character rendering metadata.
         Fields per character:
-          char        : ký tự gốc
+          char        : the original character
           hex         : Unicode codepoint (U+XXXX)
           category    : Unicode category (Lu, Ll, Lo, ...)
           script      : script group (Latin/CJK/Arabic/Hebrew/Indic/Thai/Tibetan/Khmer)
-          font_file   : tên file font thực tế
+          font_file   : the actual font file name
           font_source : PRIMARY / FALLBACK / EMOJI / MISSING
-          ttc_index   : index trong TTC (-1 nếu TTF thường)
-          has_glyph   : glyph có tồn tại trong font không
+          ttc_index   : index within the TTC (-1 for a regular TTF)
+          has_glyph   : whether the glyph exists in the font
           synthetic   : NONE / BOLD / ITALIC / BOLD+ITALIC
-          render_path : SHAPED / SIMPLE / CHAR (dự đoán từ script)
-          tag_context : face tag đang active (nếu có inline tag)
-          is_tag      : True nếu char này là một phần của inline tag (bị skip khi render)
+          render_path : SHAPED / SIMPLE / CHAR (predicted from script)
+          tag_context : the currently active face tag (if there's an inline tag)
+          is_tag      : True if this char is part of an inline tag (skipped when rendering)
         """
         self._ensure_init()
 
@@ -1389,20 +1389,20 @@ cdef class DynamicFont:
             3: "Indic", 4: "Thai", 5: "Tibetan",
             6: "Khmer", 7: "Latin/CJK"
         }
-        # Render path dự đoán từ script group
+        # Render path predicted from script group
         _RENDER_PATH = {
             0: "SIMPLE", 1: "SHAPED", 2: "SHAPED",
             3: "SHAPED", 4: "SHAPED", 5: "SHAPED",
             6: "SHAPED", 7: "SIMPLE"
         }
 
-        active_face = face  # face đang active theo inline tag
+        active_face = face  # face currently active per inline tag
 
         while i < n:
             ch   = text[i]
             code = ord(ch)
 
-            # --- Parse inline tags (đánh dấu, không thêm vào info) ---
+            # --- Parse inline tags (mark only, not added to info) ---
             # Tag ^X (color)
             if code == 0x5E and i + 1 < n and (text[i+1] in RICH_PALETTE or text[i+1] == 'r'):
                 info.append({
@@ -1425,7 +1425,7 @@ cdef class DynamicFont:
                         active_face = text[i+2:eq_idx].lower().strip()
                     else:
                         active_face = text[i+1:eq_idx].lower().strip()
-                    # Tìm closing }
+                    # Find closing }
 
 
 
@@ -1453,7 +1453,7 @@ cdef class DynamicFont:
                 })
                 i += 2; continue
 
-            # --- Ký tự thường ---
+            # --- Regular character ---
             cat          = unicodedata.category(ch)
             if code == 0x20 or code == 0x00A0:   script_group = 0
             elif 0x0590 <= code <= 0x05FF:        script_group = 1
@@ -1479,7 +1479,7 @@ cdef class DynamicFont:
                 fname = os.path.basename(real_path)
                 has_g = self._has_glyph(path, code)
 
-                # Xác định source
+                # Determine source
                 primary_p = self._get_true_path(self.primary_name, active_face)
                 fallback_p = self._get_true_path(self.fallback_name, active_face)
                 emoji_p    = getattr(self, '_emoji_path', None)
