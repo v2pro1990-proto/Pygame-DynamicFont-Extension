@@ -87,6 +87,24 @@ cdef bint _is_scanning = False
 
 #=====================================================================
 # NEW IN V1.3 : Now embbeded FreeType to Extension
+#=======================================================================
+# ft2build.h MUST be included before ANY other FreeType header — FreeType's
+# own freetype.h has a hard #error guard that refuses to compile unless
+# this came first (its intended usage is "#include <ft2build.h>" followed
+# by "#include FT_FREETYPE_H", not including freetype/freetype.h by its
+# literal path directly). This block declares nothing — it exists purely
+# so Cython emits the #include line at the right point, before the real
+# declarations block below. Confirmed via a real build failure: this
+# guard didn't trigger during earlier local Windows/Linux builds (likely
+# a difference in how those FreeType installs were configured), but DID
+# trigger on the manylinux container's dnf-installed FreeType, aborting
+# the build with "ft2build.h' hasn't been included yet!" — this fixes it
+# unconditionally rather than relying on it happening to work.
+#=======================================================================
+cdef extern from "ft2build.h":
+    pass
+
+#=======================================================================
 # FreeType is now statically linked into the .pyd — declare ALL API/struct
 # needed in a single block here; other cdef extern blocks below just reuse
 # the type names (FT_Face/FT_GlyphSlot), not re-declare the struct body.

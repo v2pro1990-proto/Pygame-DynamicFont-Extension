@@ -39,12 +39,21 @@ jobs:
         with:
           arch: x64
 
-      - name: Use the VS toolset actually present on this runner
-        # windows-latest ships Visual Studio 2022 (generator "Visual
-        # Studio 17 2022") — build_all.bat defaults to "Visual Studio 18
-        # 2026" for local dev machines, but honors this override.
-        shell: cmd
-        run: echo GENERATOR=Visual Studio 17 2022>> %GITHUB_ENV%
+      # NOTE: a "Use the VS toolset actually present on this runner" step
+      # used to live here, forcing GENERATOR=Visual Studio 17 2022 — that
+      # was correct when this workflow was written, but windows-latest
+      # migrated to Visual Studio 2026 by default in June 2026 (confirmed
+      # via actions/runner-images' own release notes: "windows-latest...
+      # will be migrated to use Visual Studio 2026 by default", completed
+      # June 15 2026). Forcing the old VS2022 generator now made CMake
+      # fail with "could not find any instance of Visual Studio", since
+      # that toolset no longer exists on this image at all. Removed
+      # entirely rather than hardcoding a new version number here too —
+      # build_all.bat's own default (GENERATOR=Visual Studio 18 2026,
+      # already confirmed working via a real local Windows build) now
+      # matches windows-latest exactly, so no override is needed. If
+      # GitHub bumps windows-latest to a newer VS again later, this again
+      # needs no change here — only build_all.bat's own default would.
 
       - name: Build zlib -> libpng -> FreeType (with PNG)
         shell: cmd
