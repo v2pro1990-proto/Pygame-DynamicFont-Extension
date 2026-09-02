@@ -87,6 +87,21 @@ before-all = "brew install freetype libpng pkg-config"
 # prebuilt wheel.
 environment = { MACOSX_DEPLOYMENT_TARGET = "14.0" }
 
+# ARM64 (Apple Silicon) runners use a SEPARATE Homebrew install
+# (/opt/homebrew, not /usr/local) whose freetype/libpng happened to be
+# built targeting an even newer macOS — confirmed via a real build
+# failure on this exact leg: "Library dependencies do not satisfy
+# target MacOS version 14.0... has a minimum target of 26.0" (macOS 26
+# "Tahoe" — Apple synced macOS's version numbering to the year-based
+# scheme shared with iOS/watchOS starting in 2025, so this is a real,
+# current version number, not a typo). Overridden here rather than
+# raising the shared x86_64 target too, which would needlessly cut
+# x86_64 compatibility down to macOS 26+ as well when its own Homebrew
+# libraries only actually require 14.0.
+[[tool.cibuildwheel.overrides]]
+select = "*-macosx_arm64"
+environment = { MACOSX_DEPLOYMENT_TARGET = "26.0" }
+
 [tool.cibuildwheel.windows]
 # ARM64 here is cross-compiled from the SAME Intel (AMD64) runner —
 # cibuildwheel supports this natively (no separate ARM64 runner needed),
