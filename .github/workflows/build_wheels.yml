@@ -59,12 +59,68 @@ jobs:
         shell: cmd
         run: build_all.bat
 
-      - name: Build wheels
+      # MSVC has genuinely SEPARATE toolchains for each architecture —
+      # confirmed via cibuildwheel's own docs ("MSVC has separate
+      # toolchains for compiling 32-bit and 64-bit, so you will need to
+      # run cibuildwheel twice: once... after setting up the x86 build
+      # environment") and via ilammy/msvc-dev-cmd's own multi-arch
+      # example. A single "arch: x64" setup at the top of this job
+      # (as this workflow used to have) only configures the x64
+      # toolchain — building x86/ARM64 wheels under it doesn't fail to
+      # configure, but SILENTLY links against the wrong-bitness
+      # libraries, producing hundreds of "unresolved external symbol"
+      # errors covering even basic Python C-API symbols (confirmed via
+      # a real failed build: 248 unresolved externals, spanning both
+      # CPython's own API and FreeType's, on a wheel that built cleanly
+      # once re-run with a correctly-scoped x86 toolchain below).
+      # build_all.bat above only needs to run ONCE, regardless — it
+      # already cross-builds all 3 architectures' static libs via
+      # CMake's own -A flag, independent of which toolchain happens to
+      # be active in PATH at that point.
+      - name: Build AMD64 wheels
         uses: pypa/cibuildwheel@v3.2.1
         env:
+          CIBW_ARCHS: AMD64
           FREETYPE_ROOT: ${{ github.workspace }}\freetype_src
           DEPS_ROOT: C:\deps
 
+      - name: Set up MSVC developer environment for x86
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: amd64_x86
+
+      - name: Build x86 wheels
+        uses: pypa/cibuildwheel@v3.2.1
+        env:
+          CIBW_ARCHS: x86
+          FREETYPE_ROOT: ${{ github.workspace }}\freetype_src
+          DEPS_ROOT: C:\deps
+
+      - name: Set up MSVC developer environment for ARM64
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: amd64_arm64
+
+      # ARM64 remains a known-risky leg regardless of this fix — it's
+      # already documented above/elsewhere as "experimental" per
+      # cibuildwheel itself, and needs the "MSVC ARM64/ARM64EC build
+      # tools" Visual Studio component present on the runner (not
+      # verified as present-by-default on windows-latest). If this step
+      # fails while AMD64/x86 above succeeded, that's an independent,
+      # known, accepted risk — not a sign the rest of this fix is wrong.
+      - name: Build ARM64 wheels
+        uses: pypa/cibuildwheel@v3.2.1
+        env:
+          CIBW_ARCHS: ARM64
+          FREETYPE_ROOT: ${{ github.workspace }}\freetype_src
+          DEPS_ROOT: C:\deps
+
+      # Each of the 3 steps above writes into the SAME default
+      # "wheelhouse" output-dir — the cibuildwheel action itself is a
+      # thin `pipx run cibuildwheel ... --output-dir wheelhouse` call
+      # (confirmed via its own action.yml) that never clears this
+      # directory first, so wheels from each architecture accumulate
+      # here rather than overwriting each other.
       - uses: actions/upload-artifact@v4
         with:
           name: wheels-windows

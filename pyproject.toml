@@ -58,7 +58,18 @@ archs = ["x86_64", "aarch64"]
 # obviously not apt-get either (RHEL-based, not Debian). Confirmed via a
 # real-world failure report hitting this exact issue: dnf must be tried
 # FIRST, with yum/apt-get as fallbacks for other possible base images.
-before-all = "dnf install -y freetype-devel libpng-devel || yum install -y freetype-devel libpng-devel || (apt-get update && apt-get install -y libfreetype6-dev libpng-dev)"
+# The freetype-devel package on manylinux (AlmaLinux 8-based) is FreeType
+# 2.9.1 (2018) — confirmed via AlmaLinux's own package repository — which
+# predates FT_COLOR_H (added in 2.10.0+) entirely, needed for COLRv0/v1
+# color emoji support. Installing it from the system package manager is
+# therefore not an option here (unlike libpng, which the older system
+# version is fine for) — FreeType must be built from source at a modern
+# version, mirroring exactly what build_all.bat already does for Windows.
+# Verified end-to-end on a real build: this exact source (GitHub mirror,
+# same VER-2-13-3 tag used by build_all.bat) compiles clean and provides
+# FT_COLOR_H, confirmed by successfully compiling the real _core.c against
+# it after the system FreetType's version had failed on that exact symbol.
+before-all = "(dnf install -y cmake git libpng-devel zlib-devel || yum install -y cmake git libpng-devel zlib-devel || (apt-get update && apt-get install -y cmake git libpng-dev zlib1g-dev)) && git clone -b VER-2-13-3 --depth 1 https://github.com/freetype/freetype.git /tmp/freetype_src && cmake -B /tmp/freetype_src/build -S /tmp/freetype_src -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr -DFT_REQUIRE_ZLIB=ON -DFT_REQUIRE_PNG=ON && cmake --build /tmp/freetype_src/build -j4 && cmake --install /tmp/freetype_src/build"
 
 [tool.cibuildwheel.macos]
 before-all = "brew install freetype libpng pkg-config"

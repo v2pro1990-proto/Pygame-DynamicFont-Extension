@@ -205,3 +205,8 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+# Windows build dependencies - cloned fresh by build_all.bat, never committed
+zlib/
+libpng/
+freetype_src/
