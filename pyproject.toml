@@ -73,6 +73,19 @@ before-all = "(dnf install -y cmake git libpng-devel zlib-devel || yum install -
 
 [tool.cibuildwheel.macos]
 before-all = "brew install freetype libpng pkg-config"
+# Homebrew's freetype/libpng on the current macOS runner are themselves
+# built targeting macOS 14.0 (Sonoma) — cibuildwheel's own default wheel
+# target is 10.9, far older, for broad compatibility. That mismatch is
+# what delocate-wheel's repair step actually caught (confirmed via a
+# real build failure: "Library dependencies do not satisfy target MacOS
+# version 10.9... has a minimum target of 14.0"), not a bug in this
+# project's own code. Setting this to match is the only viable fix
+# without building freetype/libpng from source for macOS too (as
+# already done for Windows/Linux) — the real, unavoidable tradeoff is
+# that wheels built this way only install on macOS 14.0+; anyone on an
+# older macOS would need to build from source instead of using pip's
+# prebuilt wheel.
+environment = { MACOSX_DEPLOYMENT_TARGET = "14.0" }
 
 [tool.cibuildwheel.windows]
 # ARM64 here is cross-compiled from the SAME Intel (AMD64) runner —
