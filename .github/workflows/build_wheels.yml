@@ -1,42 +1,139 @@
-name: Build Wheels For DynamicFont Extension
+name: Build wheels
 
 on:
   push:
-    branches: [ master, main ]
-    paths-ignore:
-      - 'README.md'
-      - 'docs/**'
-      - '.gitignore'
-      - 'LICENSE'
-  pull_request:
-    branches: [ master, main ]
-    paths-ignore:
-      - 'README.md'
-      - 'docs/**'
+    tags:
+      - "v*"
+  workflow_dispatch:
 
 jobs:
-  build_wheels:
-    name: Build on ${{ matrix.os }}
-    runs-on: ${{ matrix.os }}
-    strategy:
-      matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
-
+  # --------------------------------------------------------------------
+  # Windows needs its own job: FreeType must be built from source WITH
+  # PNG support (build_all.bat) BEFORE cibuildwheel runs, since that
+  # build uses CMake/MSVC directly and doesn't fit cibuildwheel's
+  # per-wheel container "before-all" model the way Linux/macOS's simple
+  # package-manager installs do.
+  # --------------------------------------------------------------------
+  build_windows:
+    runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
 
-      - name: Build wheels via cibuildwheel
-        uses: pypa/cibuildwheel@v3.4.1
-        env:
-          CIBW_BUILD: cp38-* cp39-* cp310-* cp311-* cp312-* cp313-* cp314-*
-          CIBW_SKIP: pp*
-          
-          CIBW_ARCHS_WINDOWS: auto32 auto64          
-          CIBW_ARCHS_LINUX: auto64
-          CIBW_ARCHS_MACOS: x86_64 arm64
-
-      - name: Upload Wheels to Artifacts
-        uses: actions/upload-artifact@v4
+      - name: Set up host Python (cibuildwheel v3 requires 3.11+ to RUN it —
+          separate from the target Python versions being built for)
+        uses: actions/setup-python@v5
         with:
-          name: dynamicfont-wheels-${{ matrix.os }}-${{ strategy.job-index }}
-          path: ./wheelhouse/*.whl
+          python-version: "3.12"
+
+      - name: Set up MSVC developer environment
+        # arch stays x64 — this just sets up the base PATH for cl.exe/
+        # cmake; CMake's own -A flag (used inside build_all.bat) picks
+        # the right cross-compiler PER architecture (x64/x86/ARM64) at
+        # configure time, as long as the "MSVC ARM64/ARM64EC build
+        # tools" Visual Studio component is present on the runner. If
+        # the ARM64 leg of build_all.bat fails with a "no compiler
+        # found" style error, that component is the first thing to
+        # check/install — this hasn't been verified as present-by-
+        # -default on windows-latest.
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - name: Use the VS toolset actually present on this runner
+        # windows-latest ships Visual Studio 2022 (generator "Visual
+        # Studio 17 2022") — build_all.bat defaults to "Visual Studio 18
+        # 2026" for local dev machines, but honors this override.
+        shell: cmd
+        run: echo GENERATOR=Visual Studio 17 2022>> %GITHUB_ENV%
+
+      - name: Build zlib -> libpng -> FreeType (with PNG)
+        shell: cmd
+        run: build_all.bat
+
+      - name: Build wheels
+        uses: pypa/cibuildwheel@v3.2.1
+        env:
+          FREETYPE_ROOT: ${{ github.workspace }}\freetype_src
+          DEPS_ROOT: C:\deps
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheels-windows
+          path: wheelhouse/*.whl
+
+  # --------------------------------------------------------------------
+  # Linux and macOS: FreeType (already PNG-enabled by the distro/brew
+  # build) comes straight from the package manager — see the before-all
+  # hooks in pyproject.toml's [tool.cibuildwheel.linux]/[.macos] sections.
+  # No source build needed, so all three share one simple job via the
+  # matrix.
+  #
+  # macOS is split into TWO separate runner labels rather than building
+  # universal2 wheels: macos-15-intel (x86_64) and macos-latest (Apple
+  # Silicon/arm64, the default architecture as of GitHub's current
+  # runner images) — each has its OWN native Homebrew packages, so
+  # `brew install freetype` just works with no cross-compilation. A
+  # universal2 wheel would need a universal2 FreeType/libpng/zlib too,
+  # which Homebrew does not reliably provide via a plain `brew install`.
+  #
+  # NOTE: GitHub retired the old macos-13 Intel runner label in Dec 2025
+  # — macos-15-intel is its replacement, and is currently GitHub's last
+  # planned x86_64 macOS image (Intel Macs are being phased out
+  # industry-wide). If this label is later retired too, check
+  # https://github.com/actions/runner-images for the current Intel
+  # macOS label before re-running this workflow.
+  # --------------------------------------------------------------------
+  build_unix:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-15-intel, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up QEMU (Linux only — needed to cross-build aarch64
+          wheels via emulation on this x86_64 runner; macOS handles its
+          two architectures via separate native runner labels instead,
+          so this step is a no-op there)
+        if: matrix.os == 'ubuntu-latest'
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
+
+      - name: Set up host Python (cibuildwheel v3 requires 3.11+ to RUN it —
+          separate from the target Python versions being built for)
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Build wheels
+        uses: pypa/cibuildwheel@v3.2.1
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheels-${{ matrix.os }}
+          path: wheelhouse/*.whl
+
+  # --------------------------------------------------------------------
+  # Collects all platform wheels into a single GitHub Release attached
+  # to the version tag that triggered this workflow.
+  # --------------------------------------------------------------------
+  publish_release:
+    needs: [build_windows, build_unix]
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    # Required for softprops/action-gh-release to create a Release —
+    # GITHUB_TOKEN defaults to read-only on many repos (GitHub changed
+    # this default a while back), so without this the release step can
+    # fail with "Resource not accessible by integration".
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*.whl

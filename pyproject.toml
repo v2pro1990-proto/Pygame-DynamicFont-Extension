@@ -1,10 +1,80 @@
 [build-system]
 requires = [
     "setuptools>=61.0",
-    "cython",
-    "fonttools",
-	"freetype-py",
-    "uharfbuzz",
-    "emoji"
+    # Cython 3.3.0 officially dropped Python 3.8 support (confirmed via
+    # its own changelog: "Support for Python 3.8 has been removed",
+    # Python 3.8 having reached its own security-patch EOL in October
+    # 2024). Without this split, pip would install the newest Cython for
+    # EVERY target here — including cp38 — and the build-tool install
+    # step itself would fail before ever reaching this project's code,
+    # since Cython >=3.3.0 can't run under Python 3.8 to begin with.
+    "cython<3.3.0; python_version < '3.9'",
+    "cython>=3.3.0; python_version >= '3.9'",
 ]
 build-backend = "setuptools.build_meta"
+
+[project]
+name = "dynamic-font"
+version = "1.2.3"
+description = "High-performance multi-script text/emoji rendering engine (Cython + embedded FreeType) for pygame"
+readme = "README.md"
+requires-python = ">=3.8"
+license = { text = "MIT" }
+# pygame/pygame-ce intentionally excluded — users already have one of
+# the two installed, and this project works with either; forcing a
+# specific variant here would silently override that choice (this
+# table takes priority over setup.py's own install_requires, per
+# setuptools' pyproject.toml-first dependency resolution).
+dependencies = [
+    "uharfbuzz>=0.30.0",
+]
+
+[tool.cibuildwheel]
+# Build for CPython 3.8-3.14. 32-bit Windows (win32) IS supported —
+# pygame-ce itself still ships 32-bit Windows wheels, so this extension
+# does too (see build_all.bat, which builds both x64 and x86 static
+# libs). 32-bit Linux (manylinux_i686) is skipped separately below since
+# it's a much rarer target with no equivalent upstream justification.
+# (3.13/3.14 free-threaded variants are skipped separately below —
+# this Cython codebase hasn't been designed/tested for no-GIL mode.)
+build = "cp38-* cp39-* cp310-* cp311-* cp312-* cp313-* cp314-*"
+skip = "*-musllinux* cp3??t-*"
+build-verbosity = 1
+
+[tool.cibuildwheel.linux]
+# aarch64 needs QEMU emulation to build on the x86_64 GitHub runner —
+# set up via docker/setup-qemu-action in the workflow before cibuildwheel
+# runs. This roughly doubles Linux build time (QEMU emulation is
+# noticeably slower than native), but covers real users on ARM servers
+# (AWS Graviton etc.) and 64-bit Raspberry Pi OS.
+archs = ["x86_64", "aarch64"]
+# Debian/Ubuntu-based manylinux image already ships a PNG-enabled
+# FreeType — install the -dev headers via the container's package
+# manager before building (see setup.py's pkg-config fallback). This
+# runs correctly under QEMU emulation too — apt/yum inside the
+# manylinux container works the same regardless of host architecture.
+before-all = "yum install -y freetype-devel libpng-devel || apt-get update && apt-get install -y libfreetype6-dev libpng-dev"
+
+[tool.cibuildwheel.macos]
+before-all = "brew install freetype libpng pkg-config"
+
+[tool.cibuildwheel.windows]
+# ARM64 here is cross-compiled from the SAME Intel (AMD64) runner —
+# cibuildwheel supports this natively (no separate ARM64 runner needed),
+# but this is officially labeled "experimental" by cibuildwheel itself,
+# and has known failure reports from other projects (unresolved external
+# symbols from linking against the wrong-architecture static libs) —
+# expect this to need more debugging than the other architectures if it
+# fails. build_all.bat builds FreeType/libpng/zlib for ALL THREE
+# architectures (x64, x86, ARM64) so the right static libs are available
+# whichever one cibuildwheel is currently building.
+archs = ["AMD64", "x86", "ARM64"]
+# Windows needs FreeType built from source WITH PNG support (see
+# build_all.bat) — pip's own manylinux-style prebuilt FreeType wheels
+# don't exist for this use case, since we statically link straight into
+# the .pyd rather than depending on a separate DLL. build_all.bat must
+# be run BEFORE cibuildwheel on this platform (see the GitHub Actions
+# workflow, which does this as a separate step ahead of the cibuildwheel
+# action, not through this before-all hook — CMake/MSVC builds like this
+# don't fit cibuildwheel's per-wheel container model well).
+before-all = "echo Windows deps are built by build_all.bat as a separate CI step, not here."
