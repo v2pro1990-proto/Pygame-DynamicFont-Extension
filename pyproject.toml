@@ -72,35 +72,28 @@ archs = ["x86_64", "aarch64"]
 before-all = "(dnf install -y cmake git libpng-devel zlib-devel || yum install -y cmake git libpng-devel zlib-devel || (apt-get update && apt-get install -y cmake git libpng-dev zlib1g-dev)) && git clone -b VER-2-13-3 --depth 1 https://github.com/freetype/freetype.git /tmp/freetype_src && cmake -B /tmp/freetype_src/build -S /tmp/freetype_src -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr -DCMAKE_POSITION_INDEPENDENT_CODE=ON -DFT_REQUIRE_ZLIB=ON -DFT_REQUIRE_PNG=ON && cmake --build /tmp/freetype_src/build -j4 && cmake --install /tmp/freetype_src/build"
 
 [tool.cibuildwheel.macos]
-before-all = "brew install freetype libpng pkg-config"
-# Homebrew's freetype/libpng on the current macOS runner are themselves
-# built targeting macOS 14.0 (Sonoma) — cibuildwheel's own default wheel
-# target is 10.9, far older, for broad compatibility. That mismatch is
-# what delocate-wheel's repair step actually caught (confirmed via a
-# real build failure: "Library dependencies do not satisfy target MacOS
-# version 10.9... has a minimum target of 14.0"), not a bug in this
-# project's own code. Setting this to match is the only viable fix
-# without building freetype/libpng from source for macOS too (as
-# already done for Windows/Linux) — the real, unavoidable tradeoff is
-# that wheels built this way only install on macOS 14.0+; anyone on an
-# older macOS would need to build from source instead of using pip's
-# prebuilt wheel.
-environment = { MACOSX_DEPLOYMENT_TARGET = "14.0" }
-
-# ARM64 (Apple Silicon) runners use a SEPARATE Homebrew install
-# (/opt/homebrew, not /usr/local) whose freetype/libpng happened to be
-# built targeting an even newer macOS — confirmed via a real build
-# failure on this exact leg: "Library dependencies do not satisfy
-# target MacOS version 14.0... has a minimum target of 26.0" (macOS 26
-# "Tahoe" — Apple synced macOS's version numbering to the year-based
-# scheme shared with iOS/watchOS starting in 2025, so this is a real,
-# current version number, not a typo). Overridden here rather than
-# raising the shared x86_64 target too, which would needlessly cut
-# x86_64 compatibility down to macOS 26+ as well when its own Homebrew
-# libraries only actually require 14.0.
-[[tool.cibuildwheel.overrides]]
-select = "*-macosx_arm64"
-environment = { MACOSX_DEPLOYMENT_TARGET = "26.0" }
+# Homebrew's own prebuilt freetype/libpng turned out to be built against
+# whatever macOS SDK happened to be on that specific runner — confirmed
+# via two real build failures: x86_64 runners produced libraries needing
+# macOS 14.0+, ARM64 (Apple Silicon, using the separate /opt/homebrew
+# install) needing macOS 26.0+ ("Tahoe" — Apple's version numbering
+# synced to the year-based iOS/watchOS scheme starting in 2025, so this
+# is a real current version, not a typo). Setting MACOSX_DEPLOYMENT_TARGET
+# alone would only mask the symptom (and unevenly between architectures,
+# per-override), not fix the underlying issue: the actual .dylib files
+# still wouldn't run on anything older than what Homebrew happened to
+# build them for. Building both libpng and FreeType from source instead
+# — mirroring exactly what Linux's before-all and Windows' build_all.bat
+# already do — removes this dependency on Homebrew's own SDK choice
+# entirely, letting -DCMAKE_OSX_DEPLOYMENT_TARGET set the real minimum
+# supported macOS version directly.
+before-all = "brew install cmake pkg-config && git clone -b v1.6.44 --depth 1 https://github.com/pnggroup/libpng.git /tmp/libpng_src && cmake -B /tmp/libpng_src/build -S /tmp/libpng_src -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/tmp/macdeps -DCMAKE_OSX_DEPLOYMENT_TARGET=11.0 -DPNG_SHARED=ON -DPNG_STATIC=OFF -DPNG_TESTS=OFF && cmake --build /tmp/libpng_src/build -j4 && cmake --install /tmp/libpng_src/build && git clone -b VER-2-13-3 --depth 1 https://github.com/freetype/freetype.git /tmp/freetype_src_mac && cmake -B /tmp/freetype_src_mac/build -S /tmp/freetype_src_mac -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/tmp/macdeps -DCMAKE_OSX_DEPLOYMENT_TARGET=11.0 -DCMAKE_PREFIX_PATH=/tmp/macdeps -DFT_REQUIRE_ZLIB=ON -DFT_REQUIRE_PNG=ON && cmake --build /tmp/freetype_src_mac/build -j4 && cmake --install /tmp/freetype_src_mac/build"
+# PKG_CONFIG_PATH must persist into the actual wheel-build step (not
+# just before-all, which runs once and separately) so setup.py's own
+# pkg-config lookup finds THIS freetype2.pc/libpng.pc — built with the
+# fixed 11.0 target above — instead of falling back to any Homebrew
+# copy still present on the runner's default search path.
+environment = { MACOSX_DEPLOYMENT_TARGET = "11.0", PKG_CONFIG_PATH = "/tmp/macdeps/lib/pkgconfig" }
 
 [tool.cibuildwheel.windows]
 # ARM64 here is cross-compiled from the SAME Intel (AMD64) runner —
