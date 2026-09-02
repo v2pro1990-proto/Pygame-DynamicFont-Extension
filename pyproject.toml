@@ -69,7 +69,7 @@ archs = ["x86_64", "aarch64"]
 # same VER-2-13-3 tag used by build_all.bat) compiles clean and provides
 # FT_COLOR_H, confirmed by successfully compiling the real _core.c against
 # it after the system FreetType's version had failed on that exact symbol.
-before-all = "(dnf install -y cmake git libpng-devel zlib-devel || yum install -y cmake git libpng-devel zlib-devel || (apt-get update && apt-get install -y cmake git libpng-dev zlib1g-dev)) && git clone -b VER-2-13-3 --depth 1 https://github.com/freetype/freetype.git /tmp/freetype_src && cmake -B /tmp/freetype_src/build -S /tmp/freetype_src -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr -DFT_REQUIRE_ZLIB=ON -DFT_REQUIRE_PNG=ON && cmake --build /tmp/freetype_src/build -j4 && cmake --install /tmp/freetype_src/build"
+before-all = "(dnf install -y cmake git libpng-devel zlib-devel || yum install -y cmake git libpng-devel zlib-devel || (apt-get update && apt-get install -y cmake git libpng-dev zlib1g-dev)) && git clone -b VER-2-13-3 --depth 1 https://github.com/freetype/freetype.git /tmp/freetype_src && cmake -B /tmp/freetype_src/build -S /tmp/freetype_src -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr -DCMAKE_POSITION_INDEPENDENT_CODE=ON -DFT_REQUIRE_ZLIB=ON -DFT_REQUIRE_PNG=ON && cmake --build /tmp/freetype_src/build -j4 && cmake --install /tmp/freetype_src/build"
 
 [tool.cibuildwheel.macos]
 before-all = "brew install freetype libpng pkg-config"
