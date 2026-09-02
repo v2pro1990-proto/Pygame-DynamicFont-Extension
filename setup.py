@@ -116,45 +116,65 @@ if sys.platform == "win32":
 
 else:
     # ========================================================================
-    # Linux / macOS: use the SYSTEM FreeType (and its dependencies) via
-    # pkg-config, instead of building from source. Both platforms already
-    # make it trivial to install a FreeType built with PNG support through
-    # the normal package manager:
-    #   Linux:   apt-get install libfreetype6-dev   (PNG enabled by default
-    #            in virtually every distro build)
-    #   macOS:   brew install freetype
-    # This keeps CI fast (no zlib/libpng/FreeType source builds needed) and
-    # matches how most Cython/C extensions are packaged for these platforms.
-    # build_all.bat (Windows-only) has no equivalent here on purpose.
+    # Linux / macOS: use FreeType (and its dependencies) via pkg-config,
+    # OR a directly-specified prefix (DYNFONT_DEPS_PREFIX) when set.
+    #
+    # The direct-prefix path exists because pkg-config alone turned out to
+    # be unreliable on macOS specifically: even with PKG_CONFIG_PATH set to
+    # a from-source FreeType build's own .pc directory, pkg-config STILL
+    # resolved to Homebrew's separately-installed freetype2.pc instead —
+    # confirmed via a real build where the resulting wheel bundled
+    # Homebrew's SHARED libfreetype.6.dylib (with its full harfbuzz/glib/
+    # graphite2/brotli/pcre2 dependency chain pulled in along with it),
+    # not the STATIC libfreetype.a actually built from source for this
+    # exact purpose. PKG_CONFIG_PATH only ever ADDS a search location — it
+    # doesn't reliably take priority over whatever Homebrew itself already
+    # registered on the system beforehand, and PKG_CONFIG_LIBDIR (which
+    # does fully replace the default) still wouldn't touch a Homebrew
+    # path that isn't part of pkg-config's own compiled-in default.
+    #
+    # DYNFONT_DEPS_PREFIX, when set (see pyproject.toml's macOS before-all,
+    # which builds FreeType + libpng from source into a fixed prefix),
+    # bypasses pkg-config ENTIRELY for freetype/libpng — no ambiguity
+    # possible about which copy gets linked. Linux's before-all already
+    # installs FreeType to /usr directly (found automatically without
+    # needing this at all), so this only actually activates on macOS.
     # ========================================================================
-    def _pkgconfig(flag, package):
-        try:
-            out = subprocess.check_output(
-                ["pkg-config", flag, package], text=True
-            ).strip()
-            return out.split() if out else []
-        except (subprocess.CalledProcessError, FileNotFoundError):
-            return []
+    _deps_prefix = os.environ.get("DYNFONT_DEPS_PREFIX", "")
 
-    def _strip_prefix(flags, prefix):
-        return [f[len(prefix):] for f in flags if f.startswith(prefix)]
+    if _deps_prefix:
+        include_dirs = [os.path.join(_deps_prefix, "include", "freetype2")]
+        library_dirs = [os.path.join(_deps_prefix, "lib")]
+        libraries = ["freetype", "png16", "z"]
+    else:
+        def _pkgconfig(flag, package):
+            try:
+                out = subprocess.check_output(
+                    ["pkg-config", flag, package], text=True
+                ).strip()
+                return out.split() if out else []
+            except (subprocess.CalledProcessError, FileNotFoundError):
+                return []
 
-    _cflags = _pkgconfig("--cflags", "freetype2")
-    _libs = _pkgconfig("--libs", "freetype2")
+        def _strip_prefix(flags, prefix):
+            return [f[len(prefix):] for f in flags if f.startswith(prefix)]
 
-    include_dirs = _strip_prefix(_cflags, "-I")
-    library_dirs = _strip_prefix(_libs, "-L")
-    libraries = _strip_prefix(_libs, "-l") or ["freetype"]
+        _cflags = _pkgconfig("--cflags", "freetype2")
+        _libs = _pkgconfig("--libs", "freetype2")
 
-    if not include_dirs:
-        # pkg-config not found or freetype2.pc missing — fall back to the
-        # standard system paths most distros/Homebrew already put it in.
-        print("[WARN] pkg-config could not find freetype2 — falling back to "
-              "default system include/lib paths. If the build fails, install "
-              "the FreeType development package for your platform (see "
-              "comment above) and/or ensure pkg-config is installed.")
-        include_dirs = ["/usr/include/freetype2", "/usr/local/include/freetype2"]
-        libraries = ["freetype"]
+        include_dirs = _strip_prefix(_cflags, "-I")
+        library_dirs = _strip_prefix(_libs, "-L")
+        libraries = _strip_prefix(_libs, "-l") or ["freetype"]
+
+        if not include_dirs:
+            # pkg-config not found or freetype2.pc missing — fall back to the
+            # standard system paths most distros/Homebrew already put it in.
+            print("[WARN] pkg-config could not find freetype2 — falling back to "
+                  "default system include/lib paths. If the build fails, install "
+                  "the FreeType development package for your platform (see "
+                  "comment above) and/or ensure pkg-config is installed.")
+            include_dirs = ["/usr/include/freetype2", "/usr/local/include/freetype2"]
+            libraries = ["freetype"]
 
 extensions = [
     Extension(

@@ -88,12 +88,15 @@ before-all = "(dnf install -y cmake git libpng-devel zlib-devel || yum install -
 # entirely, letting -DCMAKE_OSX_DEPLOYMENT_TARGET set the real minimum
 # supported macOS version directly.
 before-all = "brew install cmake pkg-config && git clone -b v1.6.44 --depth 1 https://github.com/pnggroup/libpng.git /tmp/libpng_src && cmake -B /tmp/libpng_src/build -S /tmp/libpng_src -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/tmp/macdeps -DCMAKE_OSX_DEPLOYMENT_TARGET=11.0 -DPNG_SHARED=ON -DPNG_STATIC=OFF -DPNG_TESTS=OFF && cmake --build /tmp/libpng_src/build -j4 && cmake --install /tmp/libpng_src/build && git clone -b VER-2-13-3 --depth 1 https://github.com/freetype/freetype.git /tmp/freetype_src_mac && cmake -B /tmp/freetype_src_mac/build -S /tmp/freetype_src_mac -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/tmp/macdeps -DCMAKE_OSX_DEPLOYMENT_TARGET=11.0 -DCMAKE_PREFIX_PATH=/tmp/macdeps -DFT_REQUIRE_ZLIB=ON -DFT_REQUIRE_PNG=ON && cmake --build /tmp/freetype_src_mac/build -j4 && cmake --install /tmp/freetype_src_mac/build"
-# PKG_CONFIG_PATH must persist into the actual wheel-build step (not
-# just before-all, which runs once and separately) so setup.py's own
-# pkg-config lookup finds THIS freetype2.pc/libpng.pc — built with the
-# fixed 11.0 target above — instead of falling back to any Homebrew
-# copy still present on the runner's default search path.
-environment = { MACOSX_DEPLOYMENT_TARGET = "11.0", PKG_CONFIG_PATH = "/tmp/macdeps/lib/pkgconfig" }
+# DYNFONT_DEPS_PREFIX (read directly by setup.py, bypassing pkg-config
+# entirely on macOS) rather than PKG_CONFIG_PATH — confirmed via a real
+# build that PKG_CONFIG_PATH alone was NOT reliably enough to stop
+# pkg-config from still resolving to Homebrew's own separately-installed
+# freetype2.pc/libpng.pc, resulting in the wheel bundling Homebrew's
+# shared .dylib copies (with their own harfbuzz/glib/graphite2/brotli/
+# pcre2 dependency chain) instead of the from-source build made
+# specifically to avoid exactly that.
+environment = { MACOSX_DEPLOYMENT_TARGET = "11.0", DYNFONT_DEPS_PREFIX = "/tmp/macdeps" }
 
 [tool.cibuildwheel.windows]
 # ARM64 here is cross-compiled from the SAME Intel (AMD64) runner —
