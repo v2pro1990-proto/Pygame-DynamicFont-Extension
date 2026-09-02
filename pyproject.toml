@@ -53,7 +53,12 @@ archs = ["x86_64", "aarch64"]
 # manager before building (see setup.py's pkg-config fallback). This
 # runs correctly under QEMU emulation too — apt/yum inside the
 # manylinux container works the same regardless of host architecture.
-before-all = "yum install -y freetype-devel libpng-devel || apt-get update && apt-get install -y libfreetype6-dev libpng-dev"
+# manylinux_2_28 images are a minimal AlmaLinux 8 build that only ships
+# "dnf" — NOT "yum" as an alias (unlike a full AlmaLinux 8 install) and
+# obviously not apt-get either (RHEL-based, not Debian). Confirmed via a
+# real-world failure report hitting this exact issue: dnf must be tried
+# FIRST, with yum/apt-get as fallbacks for other possible base images.
+before-all = "dnf install -y freetype-devel libpng-devel || yum install -y freetype-devel libpng-devel || (apt-get update && apt-get install -y libfreetype6-dev libpng-dev)"
 
 [tool.cibuildwheel.macos]
 before-all = "brew install freetype libpng pkg-config"
