@@ -8,6 +8,34 @@ on:
 
 jobs:
   # --------------------------------------------------------------------
+  # Builds the source distribution (.tar.gz) — separate from the wheel
+  # matrix below since this needs no compiler/platform-specific work at
+  # all, just packaging the source tree per MANIFEST.in (which ensures
+  # LICENSE, pyproject.toml, and the actual _core.pyx Cython source —
+  # not just its generated _core.c — all make it in, confirmed via a
+  # real sdist build that was missing all three before MANIFEST.in was
+  # added).
+  # --------------------------------------------------------------------
+  build_sdist:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Build sdist
+        run: |
+          pip install build
+          python -m build --sdist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sdist
+          path: dist/*.tar.gz
+
+  # --------------------------------------------------------------------
   # Windows needs its own job: FreeType must be built from source WITH
   # PNG support (build_all.bat) BEFORE cibuildwheel runs, since that
   # build uses CMake/MSVC directly and doesn't fit cibuildwheel's
@@ -184,7 +212,7 @@ jobs:
   # to the version tag that triggered this workflow.
   # --------------------------------------------------------------------
   publish_release:
-    needs: [build_windows, build_unix]
+    needs: [build_sdist, build_windows, build_unix]
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/v')
     # Required for softprops/action-gh-release to create a Release —
@@ -201,4 +229,42 @@ jobs:
 
       - uses: softprops/action-gh-release@v2
         with:
-          files: dist/*.whl
+          files: |
+            dist/*.whl
+            dist/*.tar.gz
+
+  # --------------------------------------------------------------------
+  # Publishes every built wheel straight to PyPI using Trusted Publishing
+  # (OIDC-based — no API token stored as a secret anywhere, confirmed via
+  # PyPI's own docs as the currently recommended approach). This runs
+  # independently of publish_release above (both only need build_windows/
+  # build_unix, not each other) — a GitHub Release and a PyPI upload are
+  # two separate, unrelated destinations for the same built wheels.
+  #
+  # One-time manual setup required before this works (cannot be done via
+  # code): on pypi.org, under this project's Settings > Publishing, add
+  # a new GitHub publisher with Owner=v2pro1990-proto, Repository=
+  # Pygame-DynamicFont-Extension, Workflow=build_wheels.yml,
+  # Environment=pypi — matching the "environment: pypi" below exactly.
+  # --------------------------------------------------------------------
+  pypi_publish:
+    needs: [build_sdist, build_windows, build_unix]
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    environment:
+      name: pypi
+      url: https://pypi.org/p/dynamic-font
+    permissions:
+      # IMPORTANT: mandatory for Trusted Publishing — without this, PyPI
+      # has no way to verify this workflow run's identity.
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Publish package distributions to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist/

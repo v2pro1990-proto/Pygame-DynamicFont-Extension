@@ -1,0 +1,9 @@
+# Ensures the sdist (.tar.gz) contains everything needed to actually
+# rebuild the package from source — not just what setuptools happens to
+# include by default. Confirmed via a real sdist build that, without
+# this file, LICENSE, pyproject.toml, and _core.pyx (the actual Cython
+# source, as opposed to _core.c which is just its generated output)
+# were all missing from the resulting archive.
+include LICENSE
+include pyproject.toml
+include dynamic_font/_core.pyx
