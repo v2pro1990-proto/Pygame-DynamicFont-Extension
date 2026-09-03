@@ -194,7 +194,7 @@ extensions = [
 
 setup(
     name="dynamic_font",
-    version="1.2.3",
+    version="1.2.3.post1",
     packages=["dynamic_font"],
     # Bundles dynamic_font/assets/fonts/** into the wheel — these are
     # ONLY the OFL-licensed Noto family fonts (Sans/CJK/Color Emoji),

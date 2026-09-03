@@ -1,6 +1,6 @@
 # DynamicFont: Font Render Extension for Pygame
 
-> For details on what's new in the latest version, see [CHANGELOG.md](CHANGELOG.md).
+> For details on what's new in the latest version, see [CHANGELOG.md](https://github.com/v2pro1990-proto/Pygame-DynamicFont-Extension/blob/master/CHANGELOG.md).
 
 **DynamicFont** is a professional-grade Cython extension designed to eliminate the long-standing text rendering bottlenecks in standard Pygame and Pygame-CE. By engineering a custom **Texture Atlas (Glyph Caching)** architecture, it achieves rock-solid 60 FPS rendering for highly dynamic content—such as data dashboards, real-time timers, and FPS counters—without the CPU spikes or memory leaks typical of traditional surface generation.
 
@@ -23,7 +23,7 @@ Standard rendering methods in Pygame calculate typography and allocate new RAM f
 * **Rich Text Palette**: Built-in multi-color string support using a simple `^` prefix (e.g., `^1Red Text ^2Green Text`).
 * **Full Color Emoji Support — COLRv1 → COLRv0 → CBDT → pygame.font**: A single unified fallback chain automatically picks the best available renderer per glyph, from modern vector gradients down to legacy bitmap formats, with no visible gaps in coverage.
 
-![Comparison of pygame.font vs DynamicFont Extension](docs/DynamicFont_preview.png)
+![Comparison of pygame.font vs DynamicFont Extension](https://raw.githubusercontent.com/v2pro1990-proto/Pygame-DynamicFont-Extension/master/docs/DynamicFont_preview.png)
 
 ## Zero-Configuration Fonts
 
@@ -76,7 +76,7 @@ Pygame DynamicFont Extension/
 ## Prerequisites & Installation
 
 ### Using a prebuilt wheel (recommended)
-Download the wheel that matches your platform and Python version from the [Releases](../../releases) page, then:
+Download the wheel that matches your platform and Python version from the [Releases](https://github.com/v2pro1990-proto/Pygame-DynamicFont-Extension/releases) page, then:
 ```bash
 pip install dynamic_font-<version>-<platform tag>.whl
 pip install pygame-ce uharfbuzz
@@ -101,8 +101,7 @@ pip install pygame-ce cython uharfbuzz
 
 Install the wheel and you're ready to go — international text (CJK, Arabic,
 Devanagari, and many more scripts) and color emoji work immediately, with
-**zero font setup**. See [Zero-Configuration Fonts](#zero-configuration-fonts)
-below for how this works.
+**zero font setup**. See **Zero-Configuration Fonts** below for how this works.
 
 ```python
 import dynamic_font
@@ -231,7 +230,7 @@ of this project's MIT license below.
 * **[Noto fonts](https://notofonts.github.io/)** (Noto Sans + per-script
  variants, Noto Color Emoji) — bundled directly in the package as the
  default `fallback_dir`/emoji fallback (see
- [Zero-Configuration Fonts](#zero-configuration-fonts) above). Distributed
+ **Zero-Configuration Fonts** above). Distributed
  under the [SIL Open Font License](https://openfontlicense.org/), which
  explicitly permits bundling and redistribution with other software.
 
