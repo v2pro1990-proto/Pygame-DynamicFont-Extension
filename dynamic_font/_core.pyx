@@ -493,22 +493,24 @@ cdef extern from *:
 
 
 cpdef get_engine_version(bint include_cython=False):
-    cdef unsigned char hex_bytes[15]
+    cdef unsigned char hex_bytes[17]
     hex_bytes[0] = 0x76   # v
     hex_bytes[1] = 0x31   # 1
     hex_bytes[2] = 0x2e   # .
     hex_bytes[3] = 0x32   # 2
     hex_bytes[4] = 0x2e   # .
     hex_bytes[5] = 0x33   # 3
-    hex_bytes[6] = 0x2d   # -
-    hex_bytes[7] = 0x72   # r
-    hex_bytes[8] = 0x65   # e
-    hex_bytes[9] = 0x6c   # l
+    hex_bytes[6] = 0x2e   # .
+    hex_bytes[7] = 0x31   # 1
+    hex_bytes[8] = 0x2d   # -
+    hex_bytes[9] = 0x72   # r
     hex_bytes[10] = 0x65  # e
-    hex_bytes[11] = 0x61  # a
-    hex_bytes[12] = 0x73  # s
-    hex_bytes[13] = 0x65  # e
-    hex_bytes[14] = 0x00  # null terminator
+    hex_bytes[11] = 0x6c  # l
+    hex_bytes[12] = 0x65  # e
+    hex_bytes[13] = 0x61  # a
+    hex_bytes[14] = 0x73  # s
+    hex_bytes[15] = 0x65  # e
+    hex_bytes[16] = 0x00  # null terminator
     cdef str version = bytes(hex_bytes).decode('utf-8')
 
     if not include_cython:
@@ -795,20 +797,29 @@ cdef class DynamicFont:
 
     def __init__(self, 
                  primary_name="Arial", 
-                 fallback_name="Times New Roman", 
+                 fallback_name=None, 
                  fallback_dir=None, 
                  emoji_path=None,
                  init_face="regular"):
-        # fallback_dir/emoji_path default to None (not a hardcoded
-        # relative path) specifically so "the caller didn't specify
+        # fallback_dir/emoji_path/fallback_name default to None (not a
+        # hardcoded value) specifically so "the caller didn't specify
         # this" is unambiguous — auto-detection only kicks in for the
-        # genuine default case, never silently overriding a path the
+        # genuine default case, never silently overriding a value the
         # caller actually passed (including an intentional empty
         # string, which stays as-is rather than being auto-replaced).
         if fallback_dir is None:
             fallback_dir = _get_bundled_fallback_dir()
         if emoji_path is None:
             emoji_path = _auto_detect_emoji_path()
+        if fallback_name is None:
+            # "Times New Roman" (the previous default) is a Windows-
+            # bundled font with no guaranteed presence on Linux/macOS —
+            # pointing at the package's own bundled Noto Sans CJK
+            # instead means the default actually works identically on
+            # every OS out of the box, consistent with this project's
+            # own "Zero-Configuration Fonts" goal rather than working
+            # against it.
+            fallback_name = os.path.join(_get_bundled_fallback_dir(), "NotoSansCJK-Regular.ttc")
 
         # 1. INPUT SANITIZATION
             # Detect if primary/fallback is a bundled file path -> don't strip the name

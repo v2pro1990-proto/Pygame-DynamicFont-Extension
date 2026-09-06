@@ -15,7 +15,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "dynamic-font"
-version = "1.2.3.post1"
+version = "1.2.3.1"
 description = "High-performance multi-script text/emoji rendering engine (Cython + embedded FreeType) for pygame"
 readme = "README.md"
 requires-python = ">=3.8"

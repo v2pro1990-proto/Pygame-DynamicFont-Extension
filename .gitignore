@@ -210,3 +210,6 @@ __marimo__/
 zlib/
 libpng/
 freetype_src/
+
+# push batch
+push_v1231.bat

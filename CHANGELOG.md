@@ -1,3 +1,28 @@
+# 🚀 What's New in v1.2.3.1 ?
+
+Small patch focused on making the zero-config defaults actually
+work everywhere, plus a cleaner package.
+
+- **`fallback_name` default changed from "Times New Roman" to the
+  bundled `NotoSansCJK-Regular.ttc`.** "Times New Roman" is a
+  Windows-bundled font with no guaranteed presence on Linux or
+  macOS — the previous default silently didn't work as intended on
+  those platforms. Pointing at the package's own bundled Noto Sans
+  CJK instead means the default now genuinely works identically on
+  every OS out of the box, consistent with this project's own
+  "Zero-Configuration Fonts" goal from v1.2.3 rather than working
+  against it on two of the three supported platforms.
+- **Wheels no longer bundle the `.c`/`.h`/`.pyx` source files.**
+  Confirmed via a real build that these were being shipped into
+  every installed wheel (not just the sdist) due to setuptools'
+  `include_package_data=True` including everything inside the
+  package directory by default. The sdist (source distribution)
+  is unaffected and still contains the full source, since that's
+  what a from-source build actually needs — only the wheel (which
+  only needs the compiled binary to run) is now trimmed.
+
+---
+
 # 🚀 What's New in v1.2.3 ?
 
 This is a major engine update focused on color emoji quality, startup performance, and reducing external dependencies. Every change below was verified against real fonts and real rendered output before shipping — see the "Verification" notes where relevant.

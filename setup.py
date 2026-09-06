@@ -194,7 +194,7 @@ extensions = [
 
 setup(
     name="dynamic_font",
-    version="1.2.3.post1",
+    version="1.2.3.1",
     packages=["dynamic_font"],
     # Bundles dynamic_font/assets/fonts/** into the wheel — these are
     # ONLY the OFL-licensed Noto family fonts (Sans/CJK/Color Emoji),
@@ -208,6 +208,15 @@ setup(
     # entirely rather than redistributing them.
     package_data={"dynamic_font": ["assets/fonts/**/*"]},
     include_package_data=True,
+    # include_package_data=True bundles EVERY file inside the package
+    # directory into the wheel by default (confirmed via setuptools'
+    # own docs) — since dynamic_font/*.c, *.h, and _core.pyx all sit
+    # right alongside __init__.py, they were being shipped into every
+    # installed wheel too, not just the sdist. This only affects the
+    # WHEEL (built distribution) — the sdist (source distribution)
+    # still needs and keeps these files, since it's what the from-
+    # source build actually compiles from.
+    exclude_package_data={"dynamic_font": ["*.c", "*.h", "*.pyx"]},
     author="v2pro1990",
     author_email="v2pro1990@gmail.com",
     description="High-performance multilingual text & color emoji typography engine for Pygame and Pygame-CE",
