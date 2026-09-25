@@ -1,0 +1,684 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>DFBMP Builder - .dfbmp Bitmap Font Tool (v3 - fixed cell)</title>
+<style>
+  body { margin: 0; font-family: Consolas, monospace; background: #2b2b2b; color: #ddd; display: flex; flex-direction: column; height: 100vh; }
+  #toolbar { display: flex; align-items: center; gap: 8px; padding: 8px; background: #1e1e1e; border-bottom: 1px solid #444; flex-wrap: wrap; }
+  button { background: #3a3a3a; color: #ddd; border: 1px solid #555; padding: 6px 12px; cursor: pointer; border-radius: 3px; }
+  button:hover { background: #4a4a4a; }
+  button.modeActive { background: #0e639c; border-color: #1177bb; }
+  .num { width: 48px; background: #111; color: #ddd; border: 1px solid #555; padding: 3px; }
+  #status { margin-left: 12px; color: #9c9; }
+  #body { display: flex; flex: 1; overflow: hidden; }
+  #canvasWrap { flex: 1; overflow: auto; background: #202020; position: relative; }
+  #canvasStack { position: relative; }
+  #canvasStack canvas { position: absolute; top: 0; left: 0; image-rendering: pixelated; }
+  #imgCanvas { z-index: 1; }
+  #overlayCanvas { z-index: 2; cursor: crosshair; }
+  #side { width: 240px; background: #1e1e1e; border-left: 1px solid #444; padding: 8px; overflow-y: auto; }
+  #glyphList { list-style: none; margin: 0; padding: 0; font-size: 12px; }
+  #glyphList li { padding: 3px 4px; border-bottom: 1px solid #333; cursor: pointer; }
+  #glyphList li:hover { background: #333; }
+  #glyphList li.selected { background: #2a4a2a; }
+  #dialogOverlay { display: none; position: fixed; top:0; left:0; right:0; bottom:0; background: rgba(0,0,0,0.6); align-items: center; justify-content: center; z-index: 10; }
+  #dialogBox { background: #2b2b2b; border: 1px solid #666; padding: 16px; border-radius: 4px; width: 320px; }
+  #dialogBox label { display: block; margin-top: 8px; font-size: 13px; }
+  #dialogBox input { width: 100%; box-sizing: border-box; padding: 4px; margin-top: 4px; background: #111; color: #ddd; border: 1px solid #555; }
+  #dialogBox .btnrow { margin-top: 14px; text-align: right; }
+</style>
+</head>
+<body>
+
+<div id="toolbar">
+  <button id="btnLoad">Load Atlas Image</button>
+  <input type="file" id="fileInput" accept="image/*" style="display:none">
+  <button id="btnOpenDfbmp">Open .dfbmp</button>
+  <input type="file" id="dfbmpInput" accept=".dfbmp" style="display:none">
+  <span style="border-left:1px solid #555; height:20px; margin:0 4px;"></span>
+  <label title="Every glyph's cell, in atlas pixels (1 atlas pixel = 1 bit = 1 screen pixel at 1x).">
+    Cell <input type="number" id="cellW" class="num" value="10" min="1" max="256"> x
+    <input type="number" id="cellH" class="num" value="13" min="1" max="256">
+  </label>
+  <label title="Rows from the top of the cell down to the baseline (the line capital letters and digits stand on).">
+    Baseline <input type="number" id="baseline" class="num" value="12" min="0" max="256">
+  </label>
+  <button id="btnDetect" title="Find the baseline from the capital letters and digits defined so far.">Detect</button>
+  <label title="Empty pixels between neighbouring cells when the font is drawn (scaled with it: 2 px at 2x...).">
+    Gap <input type="number" id="gap" class="num" value="1" min="0" max="255">
+  </label>
+  <span style="border-left:1px solid #555; height:20px; margin:0 4px;"></span>
+  <button id="modeAdd">+ Add Cell</button>
+  <button id="modeSelect">Select/Move</button>
+  <span style="border-left:1px solid #555; height:20px; margin:0 4px;"></span>
+  <button id="btnUndo">Undo Last Glyph</button>
+  <button id="btnZoomIn">Zoom In (+)</button>
+  <button id="btnZoomOut">Zoom Out (-)</button>
+  <button id="btnExport">Export .dfbmp</button>
+  <span id="status">Load an atlas image (or open a .dfbmp) to begin.</span>
+</div>
+
+<div id="body">
+  <div id="canvasWrap">
+    <div id="canvasStack">
+      <canvas id="imgCanvas" width="10" height="10"></canvas>
+      <canvas id="overlayCanvas" width="10" height="10"></canvas>
+    </div>
+  </div>
+  <div id="side">
+    <div style="margin-bottom:6px;">Defined glyphs (fixed cell):</div>
+    <ul id="glyphList"></ul>
+  </div>
+</div>
+
+<div id="dialogOverlay">
+  <div id="dialogBox">
+    <div id="dialogTitle" style="font-weight:bold;">Character</div>
+    <label>Character (or U+XXXX codepoint):
+      <input type="text" id="dlgChar" autocomplete="off">
+    </label>
+    <div class="btnrow">
+      <button id="dlgCancel">Cancel</button>
+      <button id="dlgOk">OK</button>
+    </div>
+  </div>
+</div>
+
+<script>
+"use strict";
+
+// .dfbmp v3: a FIXED cell per font. Header (18 bytes): "DFBM", version u16 = 3,
+// glyph_count u32, cell_w u16, cell_h u16, baseline u16 (rows from the cell
+// top down to the baseline), gap u16 (empty pixels between neighbouring
+// cells). Glyph table: codepoint u32 each. Then each glyph's cell_w*cell_h
+// bits (row-major, MSB first), each glyph starting on its own byte.
+// Little-endian. The pen moves cell_w + gap per character.
+
+// ---------------------------------------------------------------- constants
+const MAGIC = [0x44, 0x46, 0x42, 0x4D]; // "DFBM"
+const FORMAT_VERSION = 3;
+const INK_THRESHOLD = 128; // bright pixel = ink (white-on-black atlases)
+const ZOOM_MIN = 0.25, ZOOM_MAX = 16.0, ZOOM_STEP = 1.25;
+
+// ------------------------------------------------------------------- state
+let img = null;
+let imgData = null;
+let zoom = 1.0;
+let glyphs = [];            // {codepoint, char, x, y} — top-left of the glyph's cell in the atlas
+let selectedIndex = -1;
+let mode = "add";            // "add" | "select"
+let exportName = "atlas.dfbmp";
+
+let dragMode = null;         // null | "move"
+let dragStartReal = null;
+let dragBox = null;
+let hoverXY = null;          // add mode: where the cell would be placed
+
+const imgCanvas = document.getElementById("imgCanvas");
+const imgCtx = imgCanvas.getContext("2d");
+const overlayCanvas = document.getElementById("overlayCanvas");
+const overlayCtx = overlayCanvas.getContext("2d");
+const canvasStack = document.getElementById("canvasStack");
+const statusEl = document.getElementById("status");
+const glyphListEl = document.getElementById("glyphList");
+const modeAddBtn = document.getElementById("modeAdd");
+const modeSelectBtn = document.getElementById("modeSelect");
+const cellWInput = document.getElementById("cellW");
+const cellHInput = document.getElementById("cellH");
+const baselineInput = document.getElementById("baseline");
+const gapInput = document.getElementById("gap");
+
+function intInput(el, lo, fallback) {
+  const v = parseInt(el.value, 10);
+  return isNaN(v) || v < lo ? fallback : v;
+}
+function cellW() { return intInput(cellWInput, 1, 1); }
+function cellH() { return intInput(cellHInput, 1, 1); }
+function baseline() { return Math.min(intInput(baselineInput, 0, 0), cellH()); }
+function gap() { return Math.min(intInput(gapInput, 0, 0), 255); }
+cellWInput.oninput = cellHInput.oninput = () => { redrawOverlay(); refreshGlyphList(); };
+baselineInput.oninput = () => redrawOverlay();
+
+// ------------------------------------------------------------- ink detect
+function pixelIsInk(r, g, b, a) {
+  if (a < 255) return a >= INK_THRESHOLD;
+  const luminance = (r * 299 + g * 587 + b * 114) / 1000;
+  return luminance >= INK_THRESHOLD;
+}
+function getPixel(x, y) {
+  if (x < 0 || y < 0 || x >= imgData.width || y >= imgData.height) return [0, 0, 0, 255];
+  const idx = (y * imgData.width + x) * 4;
+  return [imgData.data[idx], imgData.data[idx + 1], imgData.data[idx + 2], imgData.data[idx + 3]];
+}
+function inkAt(x, y) {
+  const [r, g, b, a] = getPixel(x, y);
+  return pixelIsInk(r, g, b, a);
+}
+
+// ---------------------------------------------------------------- mode UI
+function setMode(m) {
+  mode = m;
+  modeAddBtn.classList.toggle("modeActive", m === "add");
+  modeSelectBtn.classList.toggle("modeActive", m === "select");
+  statusEl.textContent = (m === "add")
+    ? "Click to place a cell (its top-left corner goes where you click)."
+    : "Click a glyph to select it; drag it or use the arrow keys (1 px) to move it. Delete removes it.";
+  redrawOverlay();
+}
+modeAddBtn.onclick = () => setMode("add");
+modeSelectBtn.onclick = () => setMode("select");
+
+// ------------------------------------------------------ layered redraw
+function redrawImage() {
+  if (!img) return;
+  const dispW = Math.max(1, Math.round(img.width * zoom));
+  const dispH = Math.max(1, Math.round(img.height * zoom));
+  imgCanvas.width = dispW; imgCanvas.height = dispH;
+  overlayCanvas.width = dispW; overlayCanvas.height = dispH;
+  canvasStack.style.width = dispW + "px";
+  canvasStack.style.height = dispH + "px";
+  imgCtx.imageSmoothingEnabled = false;
+  imgCtx.drawImage(img, 0, 0, dispW, dispH);
+  redrawOverlay();
+}
+
+function redrawOverlay() {
+  overlayCtx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
+  glyphs.forEach((box, i) => drawBox(box, i));
+  if (mode === "add" && hoverXY && img) {
+    overlayCtx.strokeStyle = "#00ff88";
+    overlayCtx.lineWidth = 1;
+    overlayCtx.strokeRect(hoverXY[0] * zoom, hoverXY[1] * zoom, cellW() * zoom, cellH() * zoom);
+  }
+}
+
+function drawBox(box, i) {
+  const x0 = box.x * zoom, y0 = box.y * zoom;
+  const w = cellW() * zoom, h = cellH() * zoom;
+  const isSelected = (mode === "select" && i === selectedIndex);
+  const color = isSelected ? "#00ff88" : "#4fc3f7";
+  overlayCtx.strokeStyle = color;
+  overlayCtx.lineWidth = isSelected ? 2 : 1;
+  overlayCtx.strokeRect(x0, y0, w, h);
+  // baseline
+  overlayCtx.strokeStyle = "rgba(255, 140, 0, 0.8)";
+  overlayCtx.lineWidth = 1;
+  overlayCtx.beginPath();
+  overlayCtx.moveTo(x0, y0 + baseline() * zoom);
+  overlayCtx.lineTo(x0 + w, y0 + baseline() * zoom);
+  overlayCtx.stroke();
+  if (zoom >= 2) {
+    overlayCtx.fillStyle = color;
+    overlayCtx.font = "bold 12px Consolas, monospace";
+    overlayCtx.fillText(box.char, x0 + 2, y0 - 2);
+  }
+}
+
+function refreshGlyphList() {
+  glyphListEl.innerHTML = "";
+  glyphs.forEach((box, i) => {
+    const li = document.createElement("li");
+    li.textContent = `'${box.char}' (U+${box.codepoint.toString(16).toUpperCase().padStart(4, "0")}) @ (${box.x},${box.y})`;
+    if (i === selectedIndex) li.classList.add("selected");
+    li.onclick = () => {
+      selectedIndex = i;
+      if (mode !== "select") setMode("select");
+      else { refreshGlyphList(); redrawOverlay(); }
+    };
+    glyphListEl.appendChild(li);
+  });
+}
+
+// ----------------------------------------------------------- coord helpers
+function canvasXY(evt) {
+  const rect = overlayCanvas.getBoundingClientRect();
+  return [evt.clientX - rect.left, evt.clientY - rect.top];
+}
+function toReal(cx, cy) { return [Math.floor(cx / zoom), Math.floor(cy / zoom)]; }
+
+function hitTestBox(rx, ry) {
+  for (let i = glyphs.length - 1; i >= 0; i--) {
+    const b = glyphs[i];
+    if (rx >= b.x && rx < b.x + cellW() && ry >= b.y && ry < b.y + cellH()) return i;
+  }
+  return null;
+}
+
+// ------------------------------------------------------------------ mouse
+overlayCanvas.addEventListener("mousemove", (evt) => {
+  if (!img) return;
+  const [rx, ry] = toReal(...canvasXY(evt));
+  if (dragMode === "move") {
+    dragBox.x = Math.max(0, rx - dragStartReal[0]);
+    dragBox.y = Math.max(0, ry - dragStartReal[1]);
+    redrawOverlay();
+    return;
+  }
+  if (mode === "add") {
+    hoverXY = [rx, ry];
+    overlayCanvas.style.cursor = "crosshair";
+    redrawOverlay();
+  } else {
+    overlayCanvas.style.cursor = (hitTestBox(rx, ry) !== null) ? "move" : "default";
+  }
+});
+
+overlayCanvas.addEventListener("mouseleave", () => { hoverXY = null; redrawOverlay(); });
+
+overlayCanvas.addEventListener("mousedown", (evt) => {
+  if (!img) return;
+  const [rx, ry] = toReal(...canvasXY(evt));
+  if (mode === "select") {
+    const hitIdx = hitTestBox(rx, ry);
+    selectedIndex = hitIdx === null ? -1 : hitIdx;
+    if (hitIdx !== null) {
+      dragMode = "move";
+      dragBox = glyphs[hitIdx];
+      dragStartReal = [rx - dragBox.x, ry - dragBox.y];
+    }
+    refreshGlyphList();
+    redrawOverlay();
+    return;
+  }
+  finishBox(rx, ry);
+});
+
+overlayCanvas.addEventListener("mouseup", () => {
+  if (dragMode === "move") refreshGlyphList();
+  dragMode = null; dragBox = null; dragStartReal = null;
+});
+
+// Arrow keys nudge the selected glyph's cell by 1 atlas pixel; Delete removes it.
+document.addEventListener("keydown", (evt) => {
+  if (document.getElementById("dialogOverlay").style.display === "flex") return;
+  if (evt.target && evt.target.tagName === "INPUT") return;
+  if (mode !== "select" || selectedIndex < 0) return;
+  const g = glyphs[selectedIndex];
+  const d = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] }[evt.key];
+  if (d) {
+    g.x = Math.max(0, g.x + d[0]);
+    g.y = Math.max(0, g.y + d[1]);
+  } else if (evt.key === "Delete") {
+    glyphs.splice(selectedIndex, 1);
+    selectedIndex = -1;
+  } else {
+    return;
+  }
+  evt.preventDefault();
+  refreshGlyphList();
+  redrawOverlay();
+});
+
+// ------------------------------------------------------------------- zoom
+function zoomBy(factor) {
+  if (!img) return;
+  const oldZoom = zoom;
+  zoom = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, zoom * factor));
+  if (zoom !== oldZoom) redrawImage();
+}
+overlayCanvas.addEventListener("wheel", (evt) => {
+  if (!img) return;
+  evt.preventDefault();
+  zoomBy(evt.deltaY < 0 ? ZOOM_STEP : (1 / ZOOM_STEP));
+}, { passive: false });
+document.getElementById("btnZoomIn").onclick = () => zoomBy(ZOOM_STEP);
+document.getElementById("btnZoomOut").onclick = () => zoomBy(1 / ZOOM_STEP);
+
+// --------------------------------------------------------------- dialog
+function askGlyphChar() {
+  return new Promise((resolve) => {
+    const overlay = document.getElementById("dialogOverlay");
+    const charInput = document.getElementById("dlgChar");
+    charInput.value = "";
+    overlay.style.display = "flex";
+    charInput.focus();
+    function cleanup(result) {
+      overlay.style.display = "none";
+      document.getElementById("dlgOk").onclick = null;
+      document.getElementById("dlgCancel").onclick = null;
+      resolve(result);
+    }
+    document.getElementById("dlgOk").onclick = () => cleanup(charInput.value);
+    document.getElementById("dlgCancel").onclick = () => cleanup(null);
+  });
+}
+
+function parseCharInput(text) {
+  text = (text || "").trim();
+  if (text.toUpperCase().startsWith("U+")) {
+    const v = parseInt(text.slice(2), 16);
+    return isNaN(v) ? null : v;
+  }
+  if ([...text].length === 1) return text.codePointAt(0);
+  return null;
+}
+
+// ----------------------------------------------------------- glyph create
+async function finishBox(x, y) {
+  if (!img) return;
+  const ch = await askGlyphChar();
+  if (!ch) { redrawOverlay(); return; }
+  const codepoint = parseCharInput(ch);
+  if (codepoint === null) {
+    alert(`Couldn't parse '${ch}' as a character or codepoint.`);
+    redrawOverlay();
+    return;
+  }
+  if (glyphs.some(g => g.codepoint === codepoint)) {
+    alert(`'${String.fromCodePoint(codepoint)}' is already defined — select it and move it instead.`);
+    redrawOverlay();
+    return;
+  }
+  glyphs.push({ codepoint, char: String.fromCodePoint(codepoint), x, y });
+  selectedIndex = glyphs.length - 1;
+  redrawOverlay();
+  refreshGlyphList();
+  statusEl.textContent = `${glyphs.length} glyph(s) defined.`;
+}
+
+document.getElementById("btnUndo").onclick = () => {
+  if (!glyphs.length) return;
+  glyphs.pop();
+  selectedIndex = Math.min(selectedIndex, glyphs.length - 1);
+  redrawOverlay();
+  refreshGlyphList();
+  statusEl.textContent = glyphs.length ? `${glyphs.length} glyph(s) defined.` : "Click to place a cell.";
+};
+
+// ------------------------------------------------------------ baseline
+// The most common "last ink row + 1" of the capital letters and digits.
+function detectBaseline() {
+  const counts = new Map();
+  for (const g of glyphs) {
+    if (!/^[A-Z0-9]$/.test(g.char)) continue;
+    let last = -1;
+    for (let py = 0; py < cellH(); py++)
+      for (let px = 0; px < cellW(); px++)
+        if (inkAt(g.x + px, g.y + py)) { last = py; break; }
+    if (last >= 0) counts.set(last + 1, (counts.get(last + 1) || 0) + 1);
+  }
+  let best = null, bestN = 0;
+  for (const [row, n] of counts) if (n > bestN) { best = row; bestN = n; }
+  return best;
+}
+document.getElementById("btnDetect").onclick = () => {
+  if (!img || !glyphs.length) { alert("Define some glyphs (A-Z / 0-9) first."); return; }
+  const b = detectBaseline();
+  if (b === null) { alert("No capital letters or digits with ink to detect the baseline from."); return; }
+  baselineInput.value = String(b);
+  redrawOverlay();
+  statusEl.textContent = `Baseline: ${b} rows below the top of the cell.`;
+};
+
+// ------------------------------------------------------------- load image
+document.getElementById("btnLoad").onclick = () => document.getElementById("fileInput").click();
+document.getElementById("fileInput").onchange = (evt) => {
+  const file = evt.target.files[0];
+  if (!file) return;
+  evt.target.value = "";
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    const image = new Image();
+    image.onload = () => {
+      const off = document.createElement("canvas");
+      off.width = image.width; off.height = image.height;
+      const offCtx = off.getContext("2d");
+      offCtx.drawImage(image, 0, 0);
+      setAtlas(image, offCtx.getImageData(0, 0, image.width, image.height), [], "atlas.dfbmp", 1.0);
+      setMode("add");
+      statusEl.textContent = `Loaded ${file.name} (${image.width}x${image.height}). Set the cell size, then click to place cells.`;
+    };
+    image.src = e.target.result;
+  };
+  reader.readAsDataURL(file);
+};
+
+function setAtlas(image, data, newGlyphs, name, newZoom) {
+  img = image;
+  imgData = data;
+  zoom = newZoom;
+  glyphs = newGlyphs;
+  selectedIndex = -1;
+  exportName = name;
+  refreshGlyphList();
+  redrawImage();
+}
+
+// ---------------------------------------------------------------- export
+document.getElementById("btnExport").onclick = () => {
+  if (!img || !glyphs.length) {
+    alert("Define at least one glyph first.");
+    return;
+  }
+  const cw = cellW(), chh = cellH(), bl = baseline(), gp = gap();
+  const glyphBytes = Math.ceil(cw * chh / 8);
+  const totalSize = 18 + glyphs.length * 4 + glyphs.length * glyphBytes;
+  const buf = new ArrayBuffer(totalSize);
+  const view = new DataView(buf);
+  const bytes = new Uint8Array(buf);
+  let off = 0;
+  bytes.set(MAGIC, off); off += 4;
+  view.setUint16(off, FORMAT_VERSION, true); off += 2;
+  view.setUint32(off, glyphs.length, true); off += 4;
+  view.setUint16(off, cw, true); off += 2;
+  view.setUint16(off, chh, true); off += 2;
+  view.setUint16(off, bl, true); off += 2;
+  view.setUint16(off, gp, true); off += 2;
+  glyphs.forEach((g) => { view.setUint32(off, g.codepoint, true); off += 4; });
+  glyphs.forEach((g) => {
+    let bit = 0;
+    for (let py = 0; py < chh; py++) {
+      for (let px = 0; px < cw; px++) {
+        if (inkAt(g.x + px, g.y + py)) bytes[off + (bit >> 3)] |= (0x80 >> (bit & 7));
+        bit++;
+      }
+    }
+    off += glyphBytes;
+  });
+
+  const blob = new Blob([buf], { type: "application/octet-stream" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = exportName;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+  statusEl.textContent = `Exported ${glyphs.length} glyph(s), cell ${cw}x${chh}, baseline ${bl}, gap ${gp} (${totalSize} bytes).`;
+};
+
+// ------------------------------------------------------------ open .dfbmp
+// v3 files open as they are. v2 files (per-glyph box sizes, possibly
+// captured from an enlarged screenshot) are converted: the enlargement is
+// detected and undone, and every glyph is put into one fixed cell — ink
+// centred horizontally, box top at the cell top. Check (and move) the
+// glyphs, set the real cell size if needed, then Export.
+
+function readBits(bits, w, x, y) {
+  const i = y * w + x;
+  return (bits[i >> 3] & (0x80 >> (i & 7))) !== 0;
+}
+
+function parseDfbmp(buf) {
+  const view = new DataView(buf);
+  const bytes = new Uint8Array(buf);
+  if (buf.byteLength < 10 || MAGIC.some((m, i) => bytes[i] !== m)) throw new Error("not a .dfbmp file");
+  const version = view.getUint16(4, true);
+  const count = view.getUint32(6, true);
+  if (version === 3) {
+    const cw = view.getUint16(10, true), chh = view.getUint16(12, true), bl = view.getUint16(14, true);
+    const gp = view.getUint16(16, true);
+    const gb = Math.ceil(cw * chh / 8);
+    if (18 + count * 4 + count * gb !== buf.byteLength) throw new Error("file size doesn't match its header");
+    const list = [];
+    for (let i = 0; i < count; i++) {
+      const start = 18 + count * 4 + i * gb;
+      list.push({ codepoint: view.getUint32(18 + i * 4, true), w: cw, h: chh, bits: bytes.subarray(start, start + gb) });
+    }
+    return { version, cellW: cw, cellH: chh, baseline: bl, gap: gp, list };
+  }
+  if (version === 2) {
+    let off = 10 + count * 10;
+    if (off > buf.byteLength) throw new Error("truncated file");
+    const list = [];
+    for (let i = 0; i < count; i++) {
+      const t = 10 + i * 10;
+      const g = { codepoint: view.getUint32(t, true), w: view.getUint16(t + 4, true), h: view.getUint16(t + 6, true) };
+      const n = Math.ceil(g.w * g.h / 8);
+      if (off + n > buf.byteLength) throw new Error("truncated file");
+      g.bits = bytes.subarray(off, off + n);
+      off += n;
+      list.push(g);
+    }
+    return { version, list };
+  }
+  throw new Error("unsupported .dfbmp version " + version);
+}
+
+function gcd(a, b) { while (b) [a, b] = [b, a % b]; return a; }
+
+// Enlargement factor of v2 glyph data: the gcd of all the ink/empty run
+// lengths that don't touch a box edge (a box edge can cut a block). 1 for
+// data captured at 1x; 2 for a 2x screenshot (every pixel a 2x2 block).
+function detectScale(list) {
+  let k = 0;
+  const runs = (get, n) => {
+    let start = 0;
+    for (let i = 1; i <= n; i++) {
+      if (i === n || get(i) !== get(start)) {
+        if (start > 0 && i < n) k = gcd(k, i - start);
+        start = i;
+      }
+    }
+  };
+  for (const g of list) {
+    for (let y = 0; y < g.h; y++) runs(x => readBits(g.bits, g.w, x, y), g.w);
+    for (let x = 0; x < g.w; x++) runs(y => readBits(g.bits, g.w, x, y), g.h);
+  }
+  return k >= 2 ? k : 1;
+}
+
+// Where a glyph's k x k blocks start along one axis: a position at which
+// the value changes is always a block boundary.
+function blockPhase(g, k, horizontal) {
+  const n = horizontal ? g.w : g.h, m = horizontal ? g.h : g.w;
+  for (let j = 0; j < m; j++) {
+    for (let i = 1; i < n; i++) {
+      const a = horizontal ? readBits(g.bits, g.w, i - 1, j) : readBits(g.bits, g.w, j, i - 1);
+      const b = horizontal ? readBits(g.bits, g.w, i, j) : readBits(g.bits, g.w, j, i);
+      if (a !== b) return i % k;
+    }
+  }
+  return 0;
+}
+
+// A v2 glyph undone to 1x: {w, h, ink(x, y)}.
+function toOneX(g, k) {
+  if (k === 1) return { w: g.w, h: g.h, ink: (x, y) => readBits(g.bits, g.w, x, y) };
+  const px = blockPhase(g, k, true), py = blockPhase(g, k, false);
+  // a partial block at the top/left edge counts as a pixel of its own
+  const ox = px ? px - k : 0, oy = py ? py - k : 0;
+  const w = Math.ceil((g.w - ox) / k), h = Math.ceil((g.h - oy) / k);
+  return {
+    w, h,
+    ink: (x, y) => {
+      const sx = Math.min(g.w - 1, Math.max(0, ox + x * k + Math.floor(k / 2)));
+      const sy = Math.min(g.h - 1, Math.max(0, oy + y * k + Math.floor(k / 2)));
+      return readBits(g.bits, g.w, sx, sy);
+    },
+  };
+}
+
+function buildAtlas(cells, cw, chh) {
+  const PAD = 4, PER_ROW = 16;
+  const rows = Math.ceil(cells.length / PER_ROW);
+  const atlasW = PAD + Math.min(cells.length, PER_ROW) * (cw + PAD);
+  const atlasH = PAD + rows * (chh + PAD + 4);
+  const cv = document.createElement("canvas");
+  cv.width = atlasW; cv.height = atlasH;
+  const ctx = cv.getContext("2d");
+  ctx.fillStyle = "#000"; ctx.fillRect(0, 0, atlasW, atlasH);
+  const id = ctx.getImageData(0, 0, atlasW, atlasH);
+  const out = [];
+  cells.forEach((c, i) => {
+    const x0 = PAD + (i % PER_ROW) * (cw + PAD), y0 = PAD + 4 + Math.floor(i / PER_ROW) * (chh + PAD + 4);
+    for (let y = 0; y < c.h; y++) {
+      for (let x = 0; x < c.w; x++) {
+        if (!c.ink(x, y)) continue;
+        const ax = x0 + c.dx + x, ay = y0 + c.dy + y;
+        if (ax < 0 || ay < 0 || ax >= atlasW || ay >= atlasH) continue;
+        const p = (ay * atlasW + ax) * 4;
+        id.data[p] = id.data[p + 1] = id.data[p + 2] = 255;
+      }
+    }
+    out.push({ codepoint: c.codepoint, char: String.fromCodePoint(c.codepoint), x: x0, y: y0 });
+  });
+  ctx.putImageData(id, 0, 0);
+  return { canvas: cv, data: id, glyphs: out };
+}
+
+function openParsed(parsed, name) {
+  let cw, chh, bl, cells, note;
+  if (parsed.version === 3) {
+    cw = parsed.cellW; chh = parsed.cellH; bl = parsed.baseline;
+    gapInput.value = String(parsed.gap);
+    cells = parsed.list.map(g => ({ codepoint: g.codepoint, w: cw, h: chh, dx: 0, dy: 0,
+                                    ink: (x, y) => readBits(g.bits, cw, x, y) }));
+    note = `cell ${cw}x${chh}, baseline ${bl}, gap ${parsed.gap}`;
+  } else {
+    const k = detectScale(parsed.list);
+    const one = parsed.list.map(g => ({ codepoint: g.codepoint, ...toOneX(g, k) }));
+    // ink extents at 1x
+    for (const c of one) {
+      let x0 = Infinity, x1 = -1;
+      for (let y = 0; y < c.h; y++) for (let x = 0; x < c.w; x++) if (c.ink(x, y)) { x0 = Math.min(x0, x); x1 = Math.max(x1, x); }
+      c.inkX0 = x1 < 0 ? 0 : x0; c.inkW = x1 < 0 ? 0 : x1 - x0 + 1;
+    }
+    // The cell typed in the toolbar, unless the glyphs don't fit in it.
+    const needW = Math.max(1, ...one.map(c => c.inkW)), needH = Math.max(1, ...one.map(c => c.h));
+    cw = Math.max(cellW(), needW);
+    chh = Math.max(cellH(), needH);
+    cells = one.map(c => ({ ...c, dx: Math.floor((cw - c.inkW) / 2) - c.inkX0, dy: 0 }));
+    note = `converted from v2 (${k}x enlargement undone) into ${cw}x${chh} cells (glyphs need at least ${needW}x${needH}; ` +
+           `to use another cell size, set it and open the file again). Check the glyphs, then Export`;
+    bl = null;
+  }
+  const atlas = buildAtlas(cells, cw, chh);
+  cellWInput.value = String(cw);
+  cellHInput.value = String(chh);
+  const image = new Image();
+  image.onload = () => {
+    setAtlas(image, atlas.data, atlas.glyphs, name, 4.0);
+    if (bl === null) {
+      const d = detectBaseline();
+      bl = d === null ? chh : d;
+    }
+    baselineInput.value = String(bl);
+    setMode("select");
+    statusEl.textContent = `Opened ${name}: ${glyphs.length} glyph(s), ${note}.`;
+  };
+  image.src = atlas.canvas.toDataURL("image/png");
+}
+
+document.getElementById("btnOpenDfbmp").onclick = () => document.getElementById("dfbmpInput").click();
+document.getElementById("dfbmpInput").onchange = (evt) => {
+  const file = evt.target.files[0];
+  if (!file) return;
+  evt.target.value = "";
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    let parsed;
+    try { parsed = parseDfbmp(e.target.result); }
+    catch (err) { alert(`Can't open ${file.name}: ${err.message}`); return; }
+    openParsed(parsed, file.name);
+  };
+  reader.readAsArrayBuffer(file);
+};
+
+setMode("add");
+</script>
+
+</body>
+</html>

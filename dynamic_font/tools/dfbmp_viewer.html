@@ -1,0 +1,294 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <title>DFBMP Glyph Dumper & Viewer (v3)</title>
+    <style>
+        body { 
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, monospace; 
+            background: #1e1e1e; 
+            color: #e0e0e0; 
+            margin: 20px; 
+        }
+        h1 { 
+            color: #fff; 
+            font-size: 22px; 
+            border-bottom: 1px solid #333; 
+            padding-bottom: 10px; 
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+        .upload-zone { 
+            border: 2px dashed #444; 
+            padding: 25px; 
+            text-align: center; 
+            background: #252526; 
+            border-radius: 6px; 
+            cursor: pointer; 
+            margin-bottom: 20px; 
+            transition: all 0.2s;
+        }
+        .upload-zone:hover { border-color: #007acc; background: #2a2d2e; }
+        #fileInput { display: none; }
+        
+        .stats { 
+            background: #252526; 
+            padding: 12px 16px; 
+            border-radius: 4px; 
+            margin-bottom: 20px; 
+            font-size: 13px; 
+            display: none; 
+            border-left: 4px solid #007acc;
+            line-height: 1.6;
+        }
+        
+        .glyph-grid { 
+            display: grid; 
+            grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); 
+            gap: 12px; 
+        }
+        
+        .glyph-card { 
+            background: #252526; 
+            border: 1px solid #333; 
+            border-radius: 4px; 
+            padding: 10px; 
+            display: flex; 
+            flex-direction: column; 
+            align-items: center; 
+            transition: border-color 0.2s;
+        }
+        .glyph-card:hover { border-color: #007acc; }
+        
+        .glyph-char { 
+            font-size: 20px; 
+            font-weight: bold; 
+            color: #4fc3f7; 
+            margin-bottom: 4px; 
+            min-height: 28px;
+            display: flex;
+            align-items: center;
+        }
+        
+        .glyph-info { 
+            font-size: 11px; 
+            color: #888; 
+            text-align: center; 
+            margin-bottom: 8px; 
+            width: 100%; 
+            line-height: 1.4;
+        }
+        
+        /* Hiệu ứng nền ô bàn cờ hiển thị vùng trong suốt */
+        .canvas-container { 
+            background-color: #111;
+            background-image: 
+                linear-gradient(45deg, #1a1a1a 25%, transparent 25%), 
+                linear-gradient(-45deg, #1a1a1a 25%, transparent 25%), 
+                linear-gradient(45deg, transparent 75%, #1a1a1a 75%), 
+                linear-gradient(-45deg, transparent 75%, #1a1a1a 75%);
+            background-size: 8px 8px;
+            background-position: 0 0, 0 4px, 4px -4px, -4px 0px;
+            border: 1px solid #3a3a3a; 
+            display: flex; 
+            align-items: center; 
+            justify-content: center; 
+            padding: 4px; 
+            border-radius: 3px; 
+            width: 70px; 
+            height: 70px; 
+            overflow: hidden;
+        }
+        
+        canvas { 
+            image-rendering: pixelated; 
+            max-width: 100%; 
+            max-height: 100%; 
+            box-shadow: 0 0 2px rgba(0,0,0,0.5);
+        }
+    </style>
+</head>
+<body>
+
+    <h1>DFBMP Glyph Dumper & Viewer (v3)</h1>
+    
+    <div class="upload-zone" id="dropZone">
+        <p style="margin:0;">Kéo thả file <strong>.dfbmp</strong> vào đây hoặc click để chọn file</p>
+        <input type="file" id="fileInput" accept=".dfbmp">
+    </div>
+
+    <div class="stats" id="statsPanel"></div>
+    <div class="glyph-grid" id="glyphGrid"></div>
+
+    <script>
+        const dropZone = document.getElementById('dropZone');
+        const fileInput = document.getElementById('fileInput');
+        const statsPanel = document.getElementById('statsPanel');
+        const glyphGrid = document.getElementById('glyphGrid');
+
+        dropZone.addEventListener('click', () => fileInput.click());
+        dropZone.addEventListener('dragover', (e) => { e.preventDefault(); dropZone.style.borderColor = '#007acc'; });
+        dropZone.addEventListener('dragleave', () => dropZone.style.borderColor = '#444');
+        dropZone.addEventListener('drop', (e) => {
+            e.preventDefault();
+            dropZone.style.borderColor = '#444';
+            if (e.dataTransfer.files.length > 0) processFile(e.dataTransfer.files[0]);
+        });
+
+        fileInput.addEventListener('change', (e) => {
+            if (e.target.files.length > 0) processFile(e.target.files[0]);
+        });
+
+        function processFile(file) {
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                try {
+                    parseDFBMP(new Uint8Array(e.target.result), file.name);
+                } catch (err) {
+                    alert("Lỗi khi đọc file: " + err.message);
+                    console.error(err);
+                }
+            };
+            reader.readAsArrayBuffer(file);
+        }
+
+        // .dfbmp v3 — ô cố định cho cả font. Header 18 byte: "DFBM", version u16 = 3,
+        // glyph_count u32, cell_w u16, cell_h u16, baseline u16 (số hàng từ đỉnh ô
+        // xuống đường chân chữ), gap u16 (khoảng trống giữa hai ô). Sau đó là bảng
+        // codepoint (u32 mỗi glyph), rồi cell_w*cell_h bit của từng glyph (theo hàng,
+        // MSB trước, mỗi glyph bắt đầu ở một byte mới). Little-endian.
+        function parseDFBMP(data, filename) {
+            glyphGrid.innerHTML = '';
+            statsPanel.innerHTML = '';
+            statsPanel.style.display = 'block';
+            const fail = (msg) => { statsPanel.innerHTML = `<span style="color:#f44336;">Lỗi: ${msg}</span>`; };
+
+            // 1. Header
+            if (data.length < 10) return fail('File quá nhỏ hoặc không hợp lệ.');
+            if (data[0] !== 0x44 || data[1] !== 0x46 || data[2] !== 0x42 || data[3] !== 0x4D)
+                return fail("File không đúng định dạng (Magic header không phải 'DFBM').");
+
+            const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
+            const version = view.getUint16(4, true);
+            if (version !== 3)
+                return fail(`File định dạng v${version} — viewer chỉ đọc v3. Mở file bằng builder (Open .dfbmp) rồi Export để chuyển sang v3.`);
+            if (data.length < 18) return fail('Header v3 bị thiếu.');
+
+            const glyphCount = view.getUint32(6, true);
+            const cellW = view.getUint16(10, true);
+            const cellH = view.getUint16(12, true);
+            const baseline = view.getUint16(14, true);
+            const gap = view.getUint16(16, true);
+            if (cellW === 0 || cellH === 0 || baseline > cellH)
+                return fail(`Kích thước ô / baseline không hợp lệ (ô ${cellW}x${cellH}, baseline ${baseline}).`);
+
+            const byteSize = Math.ceil(cellW * cellH / 8);
+            const expected = 18 + glyphCount * 4 + glyphCount * byteSize;
+            if (data.length !== expected)
+                return fail(`Dung lượng file (${data.length} bytes) không khớp với header (cần ${expected} bytes).`);
+
+            // 2. Bảng codepoint + dữ liệu bit
+            const glyphs = [];
+            const seen = new Map();
+            for (let i = 0; i < glyphCount; i++) {
+                const codepoint = view.getUint32(18 + i * 4, true);
+                const start = 18 + glyphCount * 4 + i * byteSize;
+                seen.set(codepoint, (seen.get(codepoint) || 0) + 1);
+                glyphs.push({ id: i, codepoint, w: cellW, h: cellH, bitmapBytes: data.subarray(start, start + byteSize) });
+            }
+            const dups = [...seen].filter(([, n]) => n > 1).map(([cp]) => String.fromCodePoint(cp));
+
+            // 3. Thông số tổng quát
+            statsPanel.innerHTML = `
+                <strong>Tên file:</strong> ${filename} &nbsp;|&nbsp;
+                <strong>Định dạng:</strong> v${version} &nbsp;|&nbsp;
+                <strong>Số Glyph:</strong> ${glyphCount} &nbsp;|&nbsp;
+                <strong>Ô:</strong> ${cellW}x${cellH} &nbsp;|&nbsp;
+                <strong>Baseline:</strong> ${baseline} &nbsp;|&nbsp;
+                <strong>Gap:</strong> ${gap} px &nbsp;|&nbsp;
+                <strong>Dung lượng:</strong> ${data.length} bytes
+                ${dups.length ? `<br><span style="color:#ffb74d;">Ký tự bị lặp (engine chỉ dùng glyph đầu tiên): ${dups.map(c => `'${c}'`).join(', ')}</span>` : ''}
+            `;
+            // Phóng to nguyên lần để glyph dễ nhìn trong ô 70px
+            const zoom = Math.max(1, Math.floor(60 / Math.max(cellW, cellH)));
+
+            // 7. Giải nén 1-bit pixel và Render ra Canvas
+            glyphs.forEach(g => {
+                const card = document.createElement('div');
+                card.className = 'glyph-card';
+
+                // Xác định ký tự hiển thị từ Codepoint Unicode
+                let charDisplay = "";
+                try {
+                    charDisplay = String.fromCodePoint(g.codepoint);
+                } catch(e) {
+                    charDisplay = "?";
+                }
+
+                // Xử lý các ký tự điều khiển/khoảng trắng
+                let isSpace = (g.codepoint === 32);
+                let label = isSpace ? "Space (0x20)" : `'${charDisplay}'`;
+                let hexCode = "U+" + g.codepoint.toString(16).toUpperCase().padStart(4, '0');
+
+                const charEl = document.createElement('div');
+                charEl.className = 'glyph-char';
+                charEl.textContent = label;
+
+                const infoEl = document.createElement('div');
+                infoEl.className = 'glyph-info';
+                infoEl.innerHTML = `${hexCode}${seen.get(g.codepoint) > 1 ? ' <span style="color:#ffb74d;">(lặp)</span>' : ''}`;
+
+                const canvasContainer = document.createElement('div');
+                canvasContainer.className = 'canvas-container';
+
+                const canvas = document.createElement('canvas');
+                canvas.width = Math.max(1, g.w);
+                canvas.height = Math.max(1, g.h);
+                const ctx = canvas.getContext('2d');
+
+                if (g.w > 0 && g.h > 0) {
+                    const imgData = ctx.createImageData(g.w, g.h);
+                    let bitIndex = 0;
+
+                    // Giải mã từng bit (1: Màu trắng/Ink, 0: Trong suốt)
+                    for (let py = 0; py < g.h; py++) {
+                        for (let px = 0; px < g.w; px++) {
+                            const byte = g.bitmapBytes[bitIndex >> 3];
+                            const bit = (byte & (0x80 >> (bitIndex % 8))) !== 0;
+                            const idx = (py * g.w + px) * 4;
+
+                            if (bit) {
+                                imgData.data[idx] = 255;     // R
+                                imgData.data[idx + 1] = 255; // G
+                                imgData.data[idx + 2] = 255; // B
+                                imgData.data[idx + 3] = 255; // A (Hiện rõ)
+                            } else {
+                                imgData.data[idx + 3] = 0;   // A (Trong suốt)
+                            }
+                            bitIndex++;
+                        }
+                    }
+                    ctx.putImageData(imgData, 0, 0);
+                }
+                canvas.style.width = (g.w * zoom) + 'px';
+                canvas.style.height = (g.h * zoom) + 'px';
+
+                // Đường chân chữ (baseline)
+                const wrap = document.createElement('div');
+                wrap.style.position = 'relative';
+                wrap.appendChild(canvas);
+                const base = document.createElement('div');
+                base.style.cssText = `position:absolute; left:0; right:0; top:${baseline * zoom}px; border-top:1px solid rgba(255,140,0,0.7);`;
+                wrap.appendChild(base);
+
+                canvasContainer.appendChild(wrap);
+                card.appendChild(charEl);
+                card.appendChild(infoEl);
+                card.appendChild(canvasContainer);
+                glyphGrid.appendChild(card);
+            });
+        }
+    </script>
+</body>
+</html>

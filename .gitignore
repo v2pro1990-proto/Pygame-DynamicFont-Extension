@@ -213,3 +213,7 @@ freetype_src/
 
 # push batch
 push_v1231.bat
+push_v124.bat
+
+# HarfBuzz + SheenBidi static libraries built by build_all.bat (hbsb/CMakeLists.txt)
+hbsb/build_*/

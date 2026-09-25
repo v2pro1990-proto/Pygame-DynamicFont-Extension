@@ -63,6 +63,8 @@ typedef struct {
 typedef struct {
     FT_Face face;
     FT_Color* palette;
+    FT_UShort num_palette_entries;  /* bounds for palette[] — a malformed
+                                     * font can reference any 16-bit index */
     ColrV1Layer layers[COLRV1_MAX_LAYERS];
     int n_layers;
     int unsupported;   /* set the moment any unsupported paint type is seen */
@@ -80,7 +82,7 @@ static void solid_color_from_index(
     FT_F2Dot14 alpha = ci->alpha;  /* 2.14 fixed point, 1.0 == 0x4000 */
     int a16;
 
-    if (idx == 0xFFFF) {
+    if (idx == 0xFFFF || idx >= ctx->num_palette_entries) {
         /* 0xFFFF means "use the caller's foreground color" per the COLR
          * spec — this reference implementation has no foreground color
          * parameter (same simplification colrv0_render.c makes), so it
@@ -666,24 +668,38 @@ static int composite_layers(ColrV1Ctx* ctx, unsigned char** out_buf,
  * its OWN isolated RGBA buffer, for compositing modes that need real
  * pixel-level combination (SRC_IN, etc) rather than simple sequential
  * "over" drawing. Uses a fresh ColrV1Ctx sharing the same face/palette. */
-static int render_subtree(FT_Face face, FT_Color* palette, FT_OpaquePaint ref, Matrix2x3 mat,
-                           int apply_italic,
+static int render_subtree(const ColrV1Ctx* parent, FT_OpaquePaint ref, Matrix2x3 mat,
+                           int depth,
                            unsigned char** out_buf, int* out_w, int* out_h,
                            int* out_dev_left, int* out_dev_top) {
-    ColrV1Ctx sub_ctx;
-    sub_ctx.face = face;
-    sub_ctx.palette = palette;
-    sub_ctx.n_layers = 0;
-    sub_ctx.unsupported = 0;
-    sub_ctx.apply_italic = apply_italic;
+    /* Heap, not stack: a ColrV1Ctx is ~27KB (64 layers x 16 gradient
+     * stops each), and nested composites recurse through here. */
+    ColrV1Ctx* sub_ctx;
+    int ok;
 
-    process_paint(&sub_ctx, ref, 0, mat);
-    if (sub_ctx.unsupported) {
+    if (depth > COLRV1_MAX_DEPTH) return 0;
+    sub_ctx = (ColrV1Ctx*)malloc(sizeof(ColrV1Ctx));
+    if (!sub_ctx) return 0;
+    sub_ctx->face = parent->face;
+    sub_ctx->palette = parent->palette;
+    sub_ctx->num_palette_entries = parent->num_palette_entries;
+    sub_ctx->n_layers = 0;
+    sub_ctx->unsupported = 0;
+    sub_ctx->apply_italic = parent->apply_italic;
+
+    /* Continue the PARENT's depth count — restarting at 0 here let a
+     * cyclic paint graph that loops through a PaintComposite recurse
+     * without bound (stack overflow) despite COLRV1_MAX_DEPTH. */
+    process_paint(sub_ctx, ref, depth, mat);
+    if (sub_ctx->unsupported) {
         int i;
-        for (i = 0; i < sub_ctx.n_layers; i++) free(sub_ctx.layers[i].buf);
+        for (i = 0; i < sub_ctx->n_layers; i++) free(sub_ctx->layers[i].buf);
+        free(sub_ctx);
         return 0;
     }
-    return composite_layers(&sub_ctx, out_buf, out_w, out_h, out_dev_left, out_dev_top);
+    ok = composite_layers(sub_ctx, out_buf, out_w, out_h, out_dev_left, out_dev_top);
+    free(sub_ctx);
+    return ok;
 }
 
 
@@ -920,8 +936,8 @@ static int process_paint(ColrV1Ctx* ctx, FT_OpaquePaint opaque, int depth, Matri
                 unsigned char sr, sg, sb, sa;
                 extract_solid_color(ctx, &src_peek.u.solid, &sr, &sg, &sb, &sa);
 
-                if (!render_subtree(ctx->face, ctx->palette, paint.u.composite.backdrop_paint,
-                                     mat, ctx->apply_italic, &buf_b, &wb, &hb, &lb, &tb)) {
+                if (!render_subtree(ctx, paint.u.composite.backdrop_paint,
+                                     mat, depth + 1, &buf_b, &wb, &hb, &lb, &tb)) {
                     ctx->unsupported = 1;
                     return 1;
                 }
@@ -963,8 +979,8 @@ static int process_paint(ColrV1Ctx* ctx, FT_OpaquePaint opaque, int depth, Matri
                 extract_solid_color(ctx, &backdrop_peek.u.solid, &br, &bg, &bb, &ba_solid);
                 (void)br; (void)bg; (void)bb;  /* backdrop's OWN color is irrelevant for SRC_IN — only its alpha matters */
 
-                if (!render_subtree(ctx->face, ctx->palette, paint.u.composite.source_paint,
-                                     mat, ctx->apply_italic, &buf_b, &wb, &hb, &lb, &tb)) {
+                if (!render_subtree(ctx, paint.u.composite.source_paint,
+                                     mat, depth + 1, &buf_b, &wb, &hb, &lb, &tb)) {
                     ctx->unsupported = 1;
                     return 1;
                 }
@@ -996,13 +1012,13 @@ static int process_paint(ColrV1Ctx* ctx, FT_OpaquePaint opaque, int depth, Matri
                 unsigned char *buf_s;
                 int ws, hs, ls, ts;
 
-                if (!render_subtree(ctx->face, ctx->palette, paint.u.composite.backdrop_paint,
-                                     mat, ctx->apply_italic, &buf_b, &wb, &hb, &lb, &tb)) {
+                if (!render_subtree(ctx, paint.u.composite.backdrop_paint,
+                                     mat, depth + 1, &buf_b, &wb, &hb, &lb, &tb)) {
                     ctx->unsupported = 1;
                     return 1;
                 }
-                if (!render_subtree(ctx->face, ctx->palette, paint.u.composite.source_paint,
-                                     mat, ctx->apply_italic, &buf_s, &ws, &hs, &ls, &ts)) {
+                if (!render_subtree(ctx, paint.u.composite.source_paint,
+                                     mat, depth + 1, &buf_s, &ws, &hs, &ls, &ts)) {
                     free(buf_b);
                     ctx->unsupported = 1;
                     return 1;
@@ -1092,6 +1108,10 @@ int render_colrv1_glyph(
 
     if (FT_Palette_Select(face, 0, &ctx.palette) || ctx.palette == NULL) {
         return 1;
+    }
+    {
+        FT_Palette_Data pdata;
+        ctx.num_palette_entries = FT_Palette_Data_Get(face, &pdata) ? 0 : pdata.num_palette_entries;
     }
 
     if (!FT_Get_Color_Glyph_Paint(face, glyph_index,

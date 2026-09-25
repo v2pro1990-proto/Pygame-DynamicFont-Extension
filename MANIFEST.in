@@ -7,3 +7,12 @@
 include LICENSE
 include pyproject.toml
 include dynamic_font/_core.pyx
+recursive-include dynamic_font *.c *.h
+# Third-party license texts (also shipped inside the wheel)
+recursive-include dynamic_font/licenses *
+# HarfBuzz and SheenBidi sources, compiled into the extension (see setup.py)
+graft harfbuzz_src
+graft sheenbidi_src
+# CMake project CI uses to prebuild HarfBuzz + SheenBidi (setup.py falls back
+# to compiling their sources when the libraries are absent, as in an sdist)
+include hbsb/CMakeLists.txt

@@ -2,9 +2,11 @@
 setlocal enabledelayedexpansion
 
 REM ============================================================
-REM  build_all.bat -- Builds zlib -> libpng -> FreeType (with PNG)
-REM  for x64, x86 (Win32), AND ARM64 Python, then cleans up the
-REM  source trees. ONE script, no separate cleanup step needed.
+REM  build_all.bat -- Builds zlib -> libpng -> FreeType (with PNG),
+REM  then HarfBuzz + SheenBidi (vendored in harfbuzz_src\ and
+REM  sheenbidi_src\, see hbsb\CMakeLists.txt), for x64, x86 (Win32),
+REM  AND ARM64 Python, then cleans up the source trees. ONE script,
+REM  no separate cleanup step needed.
 REM
 REM  WINDOWS ONLY. Linux/macOS do NOT need this script at all —
 REM  both platforms already have a PNG-enabled FreeType available
@@ -38,6 +40,8 @@ REM    C:\deps\arm64\lib\{zlibstatic,libpng16_static}.lib
 REM    freetype_src\build_x64\Release\freetype.lib
 REM    freetype_src\build_x86\Release\freetype.lib
 REM    freetype_src\build_arm64\Release\freetype.lib
+REM    hbsb\build_{x64,x86,arm64}\lib\dynfont_harfbuzz.lib
+REM    hbsb\build_{x64,x86,arm64}\lib\dynfont_sheenbidi.lib
 REM  setup.py picks the right one automatically based on which
 REM  Python interpreter (32-bit, 64-bit, or ARM64) is running the
 REM  build.
@@ -98,12 +102,15 @@ echo   DONE! All three architectures built successfully:
 echo     x64:   %DEPS_ROOT%\x64\lib\zlibstatic.lib
 echo            %DEPS_ROOT%\x64\lib\libpng16_static.lib
 echo            freetype_src\build_x64\Release\freetype.lib
+echo            hbsb\build_x64\lib\dynfont_harfbuzz.lib + dynfont_sheenbidi.lib
 echo     x86:   %DEPS_ROOT%\x86\lib\zlibstatic.lib
 echo            %DEPS_ROOT%\x86\lib\libpng16_static.lib
 echo            freetype_src\build_x86\Release\freetype.lib
+echo            hbsb\build_x86\lib\dynfont_harfbuzz.lib + dynfont_sheenbidi.lib
 echo     arm64: %DEPS_ROOT%\arm64\lib\zlibstatic.lib
 echo            %DEPS_ROOT%\arm64\lib\libpng16_static.lib
 echo            freetype_src\build_arm64\Release\freetype.lib
+echo            hbsb\build_arm64\lib\dynfont_harfbuzz.lib + dynfont_sheenbidi.lib
 echo.
 echo   setup.py auto-detects which one to link against based on
 echo   the Python interpreter's own architecture.
@@ -129,7 +136,7 @@ REM --------------------------------------------------------
 REM Step 1: zlib
 REM --------------------------------------------------------
 echo.
-echo === [%DEPS_SUBDIR%] STEP 1/4: zlib ===
+echo === [%DEPS_SUBDIR%] STEP 1/5: zlib ===
 if not exist zlib (
     git clone -b v1.3.1 --depth 1 https://github.com/madler/zlib.git
     if errorlevel 1 (
@@ -166,7 +173,7 @@ REM --------------------------------------------------------
 REM Step 2: libpng
 REM --------------------------------------------------------
 echo.
-echo === [%DEPS_SUBDIR%] STEP 2/4: libpng ===
+echo === [%DEPS_SUBDIR%] STEP 2/5: libpng ===
 if not exist libpng (
     git clone -b v1.6.44 --depth 1 https://github.com/pnggroup/libpng.git
     if errorlevel 1 (
@@ -206,7 +213,7 @@ REM --------------------------------------------------------
 REM Step 3: FreeType (force-enable PNG)
 REM --------------------------------------------------------
 echo.
-echo === [%DEPS_SUBDIR%] STEP 3/4: FreeType (with PNG) ===
+echo === [%DEPS_SUBDIR%] STEP 3/5: FreeType (with PNG) ===
 if not exist freetype_src (
     git clone -b VER-2-13-3 --depth 1 https://gitlab.freedesktop.org/freetype/freetype.git freetype_src
     if errorlevel 1 (
@@ -252,12 +259,42 @@ if not exist "freetype_src\%FT_BUILD_SUBDIR%\Release\freetype.lib" (
 echo [OK] FreeType [%DEPS_SUBDIR%] done: freetype_src\%FT_BUILD_SUBDIR%\Release\freetype.lib
 
 REM --------------------------------------------------------
-REM Step 4: Clean up non-essential files (only once, after the
-REM SECOND architecture finishes — see the guard below).
+REM Step 4: HarfBuzz + SheenBidi static libraries (built once
+REM here instead of recompiling HarfBuzz for every wheel)
+REM --------------------------------------------------------
+echo.
+echo === [%DEPS_SUBDIR%] STEP 4/5: HarfBuzz + SheenBidi ===
+if exist hbsb\build_%DEPS_SUBDIR% rmdir /s /q hbsb\build_%DEPS_SUBDIR%
+
+cmake -G "%GENERATOR%" -A %CMAKE_ARCH% -B hbsb\build_%DEPS_SUBDIR% -S hbsb
+if errorlevel 1 (
+    echo [ERROR] CMake configure step failed for HarfBuzz/SheenBidi [%DEPS_SUBDIR%].
+    exit /b 1
+)
+
+cmake --build hbsb\build_%DEPS_SUBDIR% --config Release -- -m
+if errorlevel 1 (
+    echo [ERROR] Build step failed for HarfBuzz/SheenBidi [%DEPS_SUBDIR%].
+    exit /b 1
+)
+
+if not exist "hbsb\build_%DEPS_SUBDIR%\lib\dynfont_harfbuzz.lib" (
+    echo [ERROR] dynfont_harfbuzz.lib was not produced - check the log above.
+    exit /b 1
+)
+if not exist "hbsb\build_%DEPS_SUBDIR%\lib\dynfont_sheenbidi.lib" (
+    echo [ERROR] dynfont_sheenbidi.lib was not produced - check the log above.
+    exit /b 1
+)
+echo [OK] HarfBuzz + SheenBidi [%DEPS_SUBDIR%] done: hbsb\build_%DEPS_SUBDIR%\lib
+
+REM --------------------------------------------------------
+REM Step 5: Clean up non-essential files (only once, after the
+REM LAST architecture finishes — see the guard below).
 REM --------------------------------------------------------
 if not "%DEPS_SUBDIR%"=="arm64" goto :skip_cleanup_here
 echo.
-echo === STEP 4/4: Cleaning up source trees ===
+echo === STEP 5/5: Cleaning up source trees ===
 if "%SKIP_CLEAN%"=="1" (
     echo [SKIP] SKIP_CLEAN=1 was set - leaving source trees untouched.
     goto :skip_cleanup_here

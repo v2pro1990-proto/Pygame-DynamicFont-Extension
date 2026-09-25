@@ -1,0 +1,3 @@
+# Windows batch files need CRLF: with LF only, cmd.exe can fail to find
+# `call :label` targets.
+*.bat text eol=crlf

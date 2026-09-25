@@ -1,110 +1,216 @@
-# 🚀 What's New in v1.2.3.1 ?
+# 🏮 What's New in v1.2.4 — Mid-Autumn Update
 
-Small patch focused on making the zero-config defaults actually
-work everywhere, plus a cleaner package.
+![DynamicFont v1.2.4 — Mid-Autumn Update](docs/v1.2.4/00_banner.png)
 
-- **`fallback_name` default changed from "Times New Roman" to the
-  bundled `NotoSansCJK-Regular.ttc`.** "Times New Roman" is a
-  Windows-bundled font with no guaranteed presence on Linux or
-  macOS — the previous default silently didn't work as intended on
-  those platforms. Pointing at the package's own bundled Noto Sans
-  CJK instead means the default now genuinely works identically on
-  every OS out of the box, consistent with this project's own
-  "Zero-Configuration Fonts" goal from v1.2.3 rather than working
-  against it on two of the three supported platforms.
-- **Wheels no longer bundle the `.c`/`.h`/`.pyx` source files.**
-  Confirmed via a real build that these were being shipped into
-  every installed wheel (not just the sdist) due to setuptools'
-  `include_package_data=True` including everything inside the
-  package directory by default. The sdist (source distribution)
-  is unaffected and still contains the full source, since that's
-  what a from-source build actually needs — only the wheel (which
-  only needs the compiled binary to run) is now trimmed.
+A big release: gradient text, a second generation of inline tags, correct
+right-to-left text, multi-line text, tabular digits and pixel-perfect bitmap
+fonts — plus a rendering pipeline that is much faster for text that changes
+every frame. HarfBuzz and a Unicode BiDi engine are now compiled into the
+extension, so **pygame / pygame-ce is still the only thing you need to
+install**.
+
+Every image below is real output: the code on the left is what produced the
+text on the right. The scripts that made the images and measured the numbers
+are in [`docs/v1.2.4/`](docs/v1.2.4/README.md) — run them to check.
 
 ---
 
-# 🚀 What's New in v1.2.3 ?
+## ✨ New Features
 
-This is a major engine update focused on color emoji quality, startup performance, and reducing external dependencies. Every change below was verified against real fonts and real rendered output before shipping — see the "Verification" notes where relevant.
+**1. Gradient text**
 
----
+Any `render()` color can be a gradient. One import, readable directions, and a
+`layer` option that repeats the sweep — stretched over the text, every N
+pixels, or every N × font size (so a dynamic counter keeps its colors while
+the number changes).
 
-## 🎨 New Features
-
-**1. COLRv1 Emoji Rendering (new C renderer, `colrv1_render.c`)**
-
-Full vector color-glyph support — solid fills, linear/radial/sweep gradients, transforms (translate/scale), and the two most common composite modes (`SRC_OVER`, `DEST_OVER`, `SRC_IN`). Verified at 99.1% glyph coverage (3958/3993 color glyphs) against a real production COLRv1 font, with byte-level pixel checks confirming correct alpha compositing and un-premultiplication.
 ```python
-# ...
-font = dynamic_font.DynamicFont(
-	primary_name = "Arial",
-	fallback_name = "Calibri",
-	emoji_path = "NotoColorEmoji-Regular.ttf" #COLRv1 Emoji"
-	)
-# ...
-text_emoji = font.render("😊😉🤡🥰", size=20, color=(255,255,255))
-text_emoji_italic = font.render("</italic={😁😀🤑🎉}>", size=20, color=(255,255,255))
-screen.blit(text_emoji, (100,200))
-screen.blit(text_emoji_italic, (200, 300))
+from dynamic_font import gradient
+
+gradient([RED, GOLD])                          # left -> right
+gradient([RED, GOLD], gradient.UP)             # RIGHT / UP / LEFT / DOWN, or any angle in degrees
+gradient([RED, GOLD], layer=3, mirror=True)    # 3 sweeps, every other one reversed
+gradient([RED, GOLD], layer=gradient.px(60))   # one sweep every 60 px
+gradient([RED, GOLD], layer=gradient.em(2))    # one sweep every 2 x the font size
+```
+
+The gradient is applied per pixel while the glyphs are drawn and sweeps
+across the whole line (or the whole block, for multi-line text). Color
+emoji keep their own colors.
+
+![Gradient text](docs/v1.2.4/01_gradient.png)
+
+**2. Rich Text v2 — size and color tags**
+
+Inline tags can now change the size and the color of part of the text, and
+several options can be combined in one tag. Colors can be a tuple, a
+`pygame.Color`, a gradient, or simply **the name of a variable** — it is
+looked up where `render()` is called.
+
+```python
+font.render("Level <size(40)={99}> reached!", 24)
+font.render("HP <color(ORANGE)={120}> / 200", 24)               # ORANGE = (255, 136, 0)
+font.render("<[aa];[size=40];[color=fire]/bold={JACKPOT}>", 24)  # fire = gradient([...])
+```
+
+- Text of different sizes on one line shares one baseline.
+- A color tag overrides `^X` palette colors inside it; a gradient in a tag
+  covers just the tagged text.
+
+![Inline tags](docs/v1.2.4/02_inline_tags.png)
+
+**3. Tabular digits — `tnum`**
+
+Scores, timers and HP values no longer make the text around them shift
+when the number changes: every digit 0–9 gets the same width.
+
+```python
+font.render("Score: <tnum={001190}>", 24)
+font.render("<[tnum];[size=40]/bold={12:05}>", 24)
+```
+
+It uses the font's own tabular digits when it has them, and gives equal
+widths in fonts that don't (such as Georgia) or that kern digit pairs (such
+as Arial's "11").
+
+![Tabular digits](docs/v1.2.4/03_tnum.png)
+
+**4. Unicode BiDi (UAX #9) — `direction=`**
+
+Arabic, Hebrew and every other right-to-left script are laid out with the
+standard Unicode Bidirectional Algorithm (via the embedded
+[SheenBidi](https://github.com/Tehreer/SheenBidi)): word order, numbers,
+punctuation and brackets come out the way the operating system shows them,
+and each run is shaped with its real script. `render(..., direction="auto" |
+"ltr" | "rtl")` sets or forces the paragraph direction.
+
+![Unicode BiDi](docs/v1.2.4/04_bidi.png)
+
+**5. Multi-line text**
+
+A `\n` (or `\r\n`) in the text starts a new line. Lines are left-aligned and
+one font line height apart, all in one Surface; tags and `^X` colors can span
+lines, and a `render()` gradient sweeps across the whole block.
+
+![Multi-line text](docs/v1.2.4/05_multiline.png)
+
+**6. Bitmap fonts — `.dfbmp`**
+
+A `.dfbmp` file is a pixel font in one small file: the glyphs themselves,
+stored as bits, plus the few numbers that describe them (cell size, baseline,
+gap). Unlike an image atlas, there is no separate definition file — it loads
+like any other font:
+
+```python
+pixel = dynamic_font.DynamicFont(dynamic_font.PIXEL_FONT)   # the pixel font that ships with the package
+pixel.render("Score: 12345", 40, WHITE)                    # 2x: one bit = 2x2 pixels
+```
+
+- One bit is one screen pixel; `size` picks the nearest **whole-number**
+  scale (1x, 2x, 3x…), so pixels always stay square and sharp.
+- Colors, gradients, tags, multi-line text and `tnum` work as with any
+  font. Characters the bitmap font doesn't have come from the fallback
+  fonts, as tall as the bitmap line (`dynamic_font.SYNC_FONT_SIZE`).
+- **DynamicFont Pixel** ships with the package (`dynamic_font.PIXEL_FONT`): a
+  10×20-pixel font with ASCII and full Vietnamese, made from JetBrains Mono
+  (SIL Open Font License) by [`scripts/make_pixel_font.py`](scripts/make_pixel_font.py) —
+  try bitmap fonts right after `pip install`.
+- A builder and a viewer come with the package — HTML pages that open in
+  your browser and work offline:
 
 ```
-![F1](docs/DynamicFont_patch2_re.png)
-
-
-**2. CBDT Emoji Rendering (new C renderer, `cbdt_render.c`)**
-
-Support for the older, bitmap-based color emoji format (embedded PNG per glyph) — the format Apple Color Emoji and older Noto builds use. Requires FreeType built with PNG support (`FT_REQUIRE_PNG`, linked against `libpng`/`zlib` — see `build_all.bat`). Automatically selects the closest embedded bitmap "strike" size for the requested font size, and skips unnecessary rescaling below a mismatch threshold to avoid `smoothscale` blur on well-populated multi-strike fonts (confirmed via direct sharpness measurement: unnecessary scaling was cutting edge contrast by ~97% even for a ~6% size mismatch).
-```python
-# ...
-font = dynamic_font.DynamicFont(
-	primary_name = "Arial",
-	fallback_name = "Calibri",
-	emoji_path = "AppleColorEmoji.ttf" #CBDT/SBIX Emoji"
-	)
+python -m dynamic_font -buildbitmap     # make a .dfbmp from an atlas image
+python -m dynamic_font -bitmapviewer    # see every glyph of a .dfbmp file
 ```
-![F2](docs/DynamicFont_patch2_re2.png)
 
+![Bitmap fonts](docs/v1.2.4/06_bitmap_font.png)
 
+**7. Other additions**
 
-**3. Unified Emoji Rendering Pipeline**
-
-Every emoji — single codepoint, ZWJ sequence (families, professions), or skin-tone variant — now goes through ONE HarfBuzz-shaped code path with a single fallback chain: **COLRv1 → COLRv0 → CBDT → pygame.font**. Positioning uses the real device-pixel top/left offsets reported by each C renderer (not an approximation), fixing multi-piece composite ligatures (e.g. Segoe UI Emoji's family glyphs) that previously rendered with misaligned sub-parts.
-
-
-
-**4. Font Hinting Re-enabled**
-
-Fixed thin diacritic marks (Vietnamese circumflex + tone-mark stacks, e.g. "Ậ") rendering as faint/clipped at moderate-to-large sizes. The engine previously disabled FreeType hinting entirely; re-enabling it restores proper grid-fitting for thin strokes, matching what native OS text renderers (e.g. Windows' ClearType) already do. Synthetic bold/italic glyphs still skip hinting (unchanged), since it can conflict with the outline transform.
-![F3](docs/DynamicFont_patch2_re3.png)
-
-**5. Zero-Configuration Fonts — Bundled Noto Family + OS Emoji Auto-Detection**
-
-`fallback_dir` and `emoji_path` are now optional. When omitted, `fallback_dir` points at Noto Sans plus per-script variants (CJK, Arabic, Devanagari, Thai, and dozens more) bundled directly in the package — licensed under the SIL Open Font License, which explicitly permits redistribution — and `emoji_path` auto-detects the OS's own installed emoji font (Segoe UI Emoji on Windows, Apple Color Emoji on macOS, Noto Color Emoji on most Linux distros) rather than bundling one, since not every emoji font is freely redistributable. Falls back to a bundled Noto Color Emoji copy if no system emoji font is found at all. Both remain fully overridable by passing explicit paths. Verified end-to-end on real Windows hardware: auto-detection correctly resolved `C:\Windows\Fonts\seguiemj.ttf`, and rendered real CJK text (Traditional Chinese + Japanese) through the bundled fallback with zero configuration; the resulting wheel's contents were inspected directly and confirmed to contain all 111 bundled font files. Apple Color Emoji specifically (`sbix` table format, not CBDT) is expected to work through the existing CBDT renderer based on FreeType's documented handling of both formats through the same code path, though this specific combination hasn't been verified on real macOS hardware yet.
+- `render(..., use_primary_space=True)`: spaces take the primary font's own
+  width instead of the fallback font's — keeps monospace fonts (e.g.
+  JetBrains Mono) column-aligned.
+- `get_debug_info()` now reports each character's real Unicode script
+  (`"Latin"`, `"Arabic"`, `"Han"`…), its ISO 15924 tag, BiDi level and
+  direction, and the path it takes (`SHAPED`, `BITMAP`, `EMOJI`, `NEWLINE`,
+  `IGNORED`). It takes `direction=` too, and is 2.4–6.8× faster.
+- `get_harfbuzz_version()` returns the version of the embedded HarfBuzz.
+- `dynamic_font.RICH_PALETTE` — the `^X` color palette — is available from the
+  package: add or change colors (`RICH_PALETTE["x"] = (255, 150, 40)`) or
+  replace the whole palette.
 
 ---
+
+## 🐞 Bug Fixes
+
+The six fixes below change what gets drawn — here is the same input rendered
+by v1.2.3 and by v1.2.4:
+
+![Visual bug fixes](docs/v1.2.4/07_fixes_before_after.png)
+
+- **A `<` in the text swallowed everything up to the next tag.** `"Giá < 5đ
+  <bold={rẻ}>"` lost `"< 5đ"` and the bold; a `<` that isn't a tag is now
+  shown as text.
+- **Right-to-left text in the wrong order.** Of 8 measured cases (Arabic with
+  numbers, Hebrew in brackets, Latin inside Arabic…) v1.2.3 got 3 right;
+  v1.2.4 gets all 8.
+- **Khmer was treated as a right-to-left script** and drawn backwards.
+- **`dynamic=True` lost kerning** (AV, To, WA) and rounding error built up
+  along the line, so dynamic and static renders of the same text differed.
+  Dynamic text is now shaped exactly like static text.
+- **Changing a `^X` palette color didn't recolor text already rendered** —
+  static text kept the colors it was first drawn with. Editing or replacing
+  `RICH_PALETTE` now takes effect on the next `render()`.
+- Text with many script / color changes (a run per word) could silently drop
+  runs past an internal limit.
+- A missing fallback font crashed `render()`; it now falls back cleanly.
+- Every `DynamicFont` instance kept its own copy of each font face open
+  (+335 MB over 60 instances); faces are now shared by the whole process.
+- Color tags understand pygame-ce's `str(pygame.Color)` format
+  (`Color(r, g, b, a)`), so an f-string with a `pygame.Color` works.
+- COLRv1 emoji: palette indices out of range and deeply nested paint graphs
+  are handled safely.
+- Color emoji rendering no longer needs a display (headless servers, tests).
+- Font paths with non-ASCII characters work on Windows.
+
+---
+
 ## ⚡ Performance
 
-**6. fontTools Dependency Removed Entirely**
+Median time per `render()` call, same machine, same fonts (Python 3.14,
+[`docs/v1.2.4/benchmark.py`](docs/v1.2.4/benchmark.py)):
 
-Font name-table reading (`build_font_map()`) and per-glyph existence checks (`_has_glyph()`) now go straight through the already-embedded FreeType C API (`FT_Get_Sfnt_Name`, `FT_Get_Char_Index`) instead of the pure-Python `fontTools` library. Verified byte-for-byte identical output against `fontTools` on real fonts (including multi-face `.ttc` collections) before replacing it. `_has_glyph()` in particular now caches a single `FT_Face` per font instead of parsing and holding the font's entire cmap table in a Python dict.
+| Scenario | v1.2.3 | v1.2.4 |
+| ----- | ----- | ----- |
+| Static text (cache hit) | 0.0007 ms | 0.0007 ms |
+| `dynamic=True`, ASCII counter | 0.044 ms | 0.036 ms |
+| `dynamic=True`, mixed scripts + emoji | 1.11 ms | 0.058 ms (**~19×**) |
+| `dynamic=True`, Arabic + number | 0.79 ms | 0.049 ms (**~16×**) |
 
-**7. Font-Suffix Matching Optimized**
-
-The 38-entry sequential suffix-stripping loop (`" bold italic"`, `"-lightitalic"`, etc.) used during font family-name parsing is now a single precompiled regex — verified behavior-identical against the original loop across 33 test cases, including edge cases (empty strings, mid-string matches, near-miss suffixes like `"boldbold"`).
-
-**8. Font Scanning + Inline-Tag Parser Rewritten in Pure C (`c_fontscanner.c`, `c_parser.c`)**
-
-System font directory scanning and the inline-tag/script/bidi parser previously ran at the Cython/Python level; both are now pure C, called directly from the render path with no Python-object overhead. Measured end-to-end on the same benchmark rig used throughout this project's development: average render time dropped from 0.031ms to 0.023ms — a ~26% improvement on top of an already-fast baseline, confirmed by repeated runs rather than a single sample.
+- Rasterized glyphs are cached once for every color (`MAX_GLYPH_CACHE` now
+  sizes this glyph cache), and HarfBuzz results, per-run layouts and parsed
+  tag runs are cached as well.
+- All runs of a line are drawn straight into one Surface instead of one
+  Surface per run blended together.
+- Font faces are shared across instances: 8 live `DynamicFont` instances use
+  +7 MB instead of +47 MB.
+- The static-text cache hit stays the first thing `render()` does, so
+  already-rendered text costs the same as before.
 
 ---
 
 ## 🛠 Internal / Build
 
-- FreeType is now built from source with PNG support (`zlib` → `libpng` → `FreeType`, see `build_all.bat`) — required for CBDT and previously disabled.
-- New precise glyph positioning API: `render_colrv0_glyph()` / `render_colrv1_glyph()` / `render_cbdt_glyph()` all report the real device-pixel `top`/`left` offset of their output bitmap, instead of callers approximating position from bitmap height alone.
-- `EMOJI_OFFSET_Y`'s effective meaning is preserved across all of the above internal formula changes via hidden calibration constants — the value `0.15` still produces the same visual result it always has, with no user-facing adjustment needed.
-- GitHub Actions workflow added (`build_wheels.yml`) — builds wheels for Windows, Linux, and macOS across CPython 3.8–3.14 via `cibuildwheel`.
-- Memory-safety hardening found during code review, unrelated to any specific feature above: a missing `try/finally` around the ASCII fast-render path's heap buffer (leaked on exception mid-render, now fixed to match the same pattern already used elsewhere in the file); a symlink-loop protection gap on POSIX systems during font directory scanning (`stat()` swapped for `lstat()`, matching the loop-guard Windows already had via its own reparse-point check); leftover Vietnamese-language comments in newly-added C source translated to English for consistency with the rest of the codebase.
-- Restructured from a single flat `.pyx` module into a proper `dynamic_font/` package (`dynamic_font/__init__.py` + `dynamic_font/_core.pyx`), required to bundle the Noto font files as installable package data. `import dynamic_font` and all existing usage are unaffected — including the module-level config variables (`MODERN_FONT`, `SMOOTH_FONT`, `ANTI_ALIAS`, `EMOJI_OFFSET_Y`), which forward through to the compiled extension via property proxying rather than becoming disconnected copies, verified by confirming a value set through the public `dynamic_font` namespace is visible from the compiled `_core` module directly.
-
----
+- **HarfBuzz 14.5.0 and SheenBidi 3.0.0 are compiled into the extension.**
+  The `uharfbuzz` dependency is gone; wheels need nothing but pygame or
+  pygame-ce.
+- CI builds HarfBuzz and SheenBidi once per architecture as static libraries
+  (`hbsb/CMakeLists.txt`, like FreeType) instead of recompiling them for every
+  wheel.
+- Windows wheels no longer depend on `VCRUNTIME140_1.dll`.
+- The full license texts of FreeType, libpng, zlib, HarfBuzz, SheenBidi, the
+  bundled Noto fonts and DynamicFont Pixel ship inside every wheel
+  (`dynamic_font/licenses/`).
+- Tag parsing, BiDi and script itemization all run in C (`c_parser.c`);
+  gradients have their own C module (`c_gradientcolor.c`), bitmap fonts theirs
+  (`c_bitmapfont.c`).

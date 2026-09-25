@@ -207,9 +207,15 @@ static int extract_face_name(FT_Library ft_lib, const char* path, int face_index
 }
 
 static void add_font_entry(C_FontScanResult* res, const char* name, const char* path, int face_index) {
+    /* A path that doesn't fit file_path[] would be stored TRUNCATED and
+     * later fail to open — skip it instead of recording a broken path. */
+    if (strlen(path) >= sizeof(res->entries[0].file_path)) return;
     if (res->count >= res->capacity) {
-        res->capacity = (res->capacity == 0) ? 256 : res->capacity * 2;
-        res->entries = (C_FontEntry*)realloc(res->entries, res->capacity * sizeof(C_FontEntry));
+        int new_cap = (res->capacity == 0) ? 256 : res->capacity * 2;
+        C_FontEntry* grown = (C_FontEntry*)realloc(res->entries, (size_t)new_cap * sizeof(C_FontEntry));
+        if (!grown) return;  /* keep what we have rather than lose it all */
+        res->entries = grown;
+        res->capacity = new_cap;
     }
     C_FontEntry* e = &res->entries[res->count++];
     strncpy(e->full_name, name, 127);
@@ -226,42 +232,62 @@ static void add_font_entry(C_FontScanResult* res, const char* name, const char* 
     e->norm_name[127] = '\0';
 }
 
-static void normalize_font_entries(C_FontScanResult* res) {
-    /* 2nd Pass: Two-pass family grouping matching the original Python normalize_font_name logic */
-    if (!res || res->count == 0) return;
+typedef struct {
+    const char* fam;
+    int idx;
+} FamRef;
 
-    for (int i = 0; i < res->count; ++i) {
-        const char* fam = res->entries[i].family_root;
-        int fam_count = 0;
+static int famref_cmp(const void* a, const void* b) {
+    return _stricmp(((const FamRef*)a)->fam, ((const FamRef*)b)->fam);
+}
 
-        /* Ignore empty family roots */
-        if (!fam || fam[0] == '\0') continue;
+static void apply_family_norm(C_FontEntry* e, int fam_count) {
+    if (fam_count == 1) {
+        /* Case 1: Family has ONLY 1 face -> strip ALL suffixes (norm_name = family_root) */
+        strncpy(e->norm_name, e->family_root, 127);
+        e->norm_name[127] = '\0';
+    } else {
+        /* Case 2: Family has multiple faces -> strip ONLY "regular" or "-regular" */
+        strncpy(e->norm_name, e->full_name, 127);
+        e->norm_name[127] = '\0';
 
-        /* Count total faces belonging to this family root */
-        for (int j = 0; j < res->count; ++j) {
-            if (_stricmp(fam, res->entries[j].family_root) == 0) {
-                fam_count++;
-            }
-        }
-
-        if (fam_count == 1) {
-            /* Case 1: Family has ONLY 1 face -> strip ALL suffixes (norm_name = family_root) */
-            if (strlen(res->entries[i].family_root) > 0) {
-                strncpy(res->entries[i].norm_name, res->entries[i].family_root, 127);
-                res->entries[i].norm_name[127] = '\0';
-            }
-        } else {
-            /* Case 2: Family has multiple faces -> strip ONLY "regular" or "-regular" */
-            strncpy(res->entries[i].norm_name, res->entries[i].full_name, 127);
-            res->entries[i].norm_name[127] = '\0';
-
-            if (ends_with_case_insensitive(res->entries[i].norm_name, " regular")) {
-                res->entries[i].norm_name[strlen(res->entries[i].norm_name) - 8] = '\0';
-            } else if (ends_with_case_insensitive(res->entries[i].norm_name, "-regular")) {
-                res->entries[i].norm_name[strlen(res->entries[i].norm_name) - 8] = '\0';
-            }
+        if (ends_with_case_insensitive(e->norm_name, " regular") ||
+            ends_with_case_insensitive(e->norm_name, "-regular")) {
+            e->norm_name[strlen(e->norm_name) - 8] = '\0';
         }
     }
+}
+
+static void normalize_font_entries(C_FontScanResult* res) {
+    /* 2nd Pass: Two-pass family grouping matching the original Python normalize_font_name logic.
+     * Sorting by family root groups each family contiguously — O(n log n)
+     * instead of the previous count-every-pair O(n^2) loop, which took
+     * noticeable time on systems with thousands of installed fonts. */
+    if (!res || res->count == 0) return;
+
+    FamRef* refs = (FamRef*)malloc((size_t)res->count * sizeof(FamRef));
+    if (!refs) return;  /* norm_name already holds full_name — still usable */
+
+    for (int i = 0; i < res->count; ++i) {
+        refs[i].fam = res->entries[i].family_root;
+        refs[i].idx = i;
+    }
+    qsort(refs, (size_t)res->count, sizeof(FamRef), famref_cmp);
+
+    int start = 0;
+    while (start < res->count) {
+        int end = start + 1;
+        while (end < res->count && _stricmp(refs[start].fam, refs[end].fam) == 0) end++;
+
+        /* Ignore empty family roots */
+        if (refs[start].fam[0] != '\0') {
+            for (int k = start; k < end; ++k) {
+                apply_family_norm(&res->entries[refs[k].idx], end - start);
+            }
+        }
+        start = end;
+    }
+    free(refs);
 }
 
 int c_scan_system_fonts(FT_Library ft_lib, const char** dirs, int num_dirs, C_FontScanResult* out_result) {

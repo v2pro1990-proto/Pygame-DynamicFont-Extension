@@ -4,8 +4,9 @@ dynamic_font — public package interface.
 The actual compiled extension lives in `dynamic_font._core` (built from
 _core.pyx) — this file exists solely to (a) keep `import dynamic_font`
 working exactly as before despite the underlying package/module
-restructure, and (b) make the four mutable module-level config
-variables (MODERN_FONT, SMOOTH_FONT, ANTI_ALIAS, EMOJI_OFFSET_Y)
+restructure, and (b) make the five mutable module-level config
+variables (MODERN_FONT, SMOOTH_FONT, ANTI_ALIAS, EMOJI_OFFSET_Y,
+SYNC_FONT_SIZE)
 actually behave like they did as a single flat module.
 
 Why this needs special handling (not just `from ._core import *`):
@@ -30,20 +31,27 @@ import types as _types
 
 from . import _core
 
-# Everything that ISN'T one of the four mutable config variables below
+# Everything that ISN'T one of the five mutable config variables below
 # is safe to re-export normally — these are either genuinely constant
 # after import (functions, the DynamicFont class) or immutable-in-
 # practice, so a plain copy-on-import is fine for them.
 from ._core import (
     DynamicFont,
     get_engine_version,
+    get_harfbuzz_version,
     get_family_root,
     is_scanning,
+    # Text color gradients: font.render(text, size, gradient([...], gradient.UP))
+    # (`gradient` IS the Gradient class; both names are kept for type hints.)
+    Gradient,
+    gradient,
+    # The bitmap font that ships with the package: DynamicFont(PIXEL_FONT)
+    PIXEL_FONT,
 )
 
 
 class _DynamicFontModule(_types.ModuleType):
-    """Swapped in as this module's __class__ below — makes the four
+    """Swapped in as this module's __class__ below — makes the five
     config variables real properties that forward every read/write
     straight to dynamic_font._core's own globals, instead of a
     disconnected copy."""
@@ -79,6 +87,26 @@ class _DynamicFontModule(_types.ModuleType):
     @EMOJI_OFFSET_Y.setter
     def EMOJI_OFFSET_Y(self, value):
         _core.EMOJI_OFFSET_Y = value
+
+    # .dfbmp bitmap primary fonts: fallback / emoji text as tall as the
+    # bitmap line (True, default) or at render()'s own size (False).
+    @property
+    def SYNC_FONT_SIZE(self):
+        return _core.SYNC_FONT_SIZE
+
+    @SYNC_FONT_SIZE.setter
+    def SYNC_FONT_SIZE(self, value):
+        _core.SYNC_FONT_SIZE = value
+
+    # The ^X palette (Rich Text v1): {"1": (255, 50, 50), ...}. Editing it
+    # (RICH_PALETTE["x"] = (R, G, B)) or replacing it both reach the engine.
+    @property
+    def RICH_PALETTE(self):
+        return _core.RICH_PALETTE
+
+    @RICH_PALETTE.setter
+    def RICH_PALETTE(self, value):
+        _core.RICH_PALETTE = value
 
 
 _sys.modules[__name__].__class__ = _DynamicFontModule

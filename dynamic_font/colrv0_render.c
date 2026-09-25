@@ -30,6 +30,8 @@ int render_colrv0_glyph(
     FT_UInt layer_glyph_index;
     FT_UInt layer_color_index;
     FT_Color* palette = NULL;
+    FT_Palette_Data pdata;
+    FT_UShort num_palette_entries;
     FT_Error err;
     ColrLayer layers[COLRV0_MAX_LAYERS];
     int n_layers = 0;
@@ -50,6 +52,7 @@ int render_colrv0_glyph(
     if (err || palette == NULL) {
         return 1;
     }
+    num_palette_entries = FT_Palette_Data_Get(face, &pdata) ? 0 : pdata.num_palette_entries;
 
     iterator.p = NULL;
     if (!FT_Get_Color_Glyph_Layer(face, glyph_index, &layer_glyph_index,
@@ -112,7 +115,7 @@ int render_colrv0_glyph(
          * spec — this reference implementation hardcodes black for now;
          * a fully correct version would let the caller pass a foreground
          * color and use it here instead. */
-        if (layer_color_index == 0xFFFF) {
+        if (layer_color_index == 0xFFFF || layer_color_index >= num_palette_entries) {
             layers[n_layers].r = 0;
             layers[n_layers].g = 0;
             layers[n_layers].b = 0;

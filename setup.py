@@ -15,7 +15,11 @@ _LONG_DESCRIPTION = _README_PATH.read_text(encoding="utf-8") if _README_PATH.exi
 # --- 2. Compiler & Linker Optimization Flags ---
 if sys.platform == "win32":
     # Enable MSVC Max Speed, Auto-Vectorization, Link-Time Code Generation and whole-program optimization
-    extra_compile_args = ["/O2", "/GL", "/fp:fast", "/favor:blend", "/Gy", "/Gw"]
+    # /EHs-c- /GR- : no C++ exceptions / RTTI for HarfBuzz (it uses neither).
+    # With MSVC's defaults the .pyd picked up a dependency on
+    # VCRUNTIME140_1.dll (__CxxFrameHandler4) that older Python / VC++
+    # runtime installs don't ship. No effect on the C files.
+    extra_compile_args = ["/O2", "/GL", "/fp:fast", "/favor:blend", "/Gy", "/Gw", "/EHs-c-", "/GR-"]
     extra_link_args     = ["/LTCG", "/OPT:REF", "/OPT:ICF"]
 else:
     # Enable GCC/Clang -O3 Tree Auto-Vectorization (SSE on x86, NEON on ARM64) and Link-Time Optimization
@@ -30,6 +34,20 @@ SOURCES = [
     "dynamic_font/cbdt_render.c",
     "dynamic_font/c_parser.c",
     "dynamic_font/c_fontscanner.c",
+    "dynamic_font/c_gradientcolor.c",
+    "dynamic_font/c_bitmapfont.c",   # .dfbmp bitmap fonts
+]
+
+# HarfBuzz 14.5.0 and SheenBidi 3.0.0 (Unicode BiDi UAX #9 + script runs
+# UAX #24) — statically linked, nothing to install at runtime. Like FreeType,
+# CI builds them ONCE per architecture into static libraries (hbsb/
+# CMakeLists.txt, run by build_all.bat on Windows and by cibuildwheel's
+# before-all on Linux/macOS) instead of recompiling HarfBuzz for every
+# wheel. Without those libraries (e.g. installing the sdist from source)
+# their unity sources are compiled right here instead.
+HBSB_SOURCES = [
+    "harfbuzz_src/src/harfbuzz.cc",       # HarfBuzz's own unity file
+    "sheenbidi_src/Source/SheenBidi.c",   # SheenBidi unity build
 ]
 
 if sys.platform == "win32":
@@ -176,6 +194,41 @@ else:
             include_dirs = ["/usr/include/freetype2", "/usr/local/include/freetype2"]
             libraries = ["freetype"]
 
+# HarfBuzz headers (all platforms). HarfBuzz is C++ with a C API: on
+# Linux/macOS the extension also links the C++ runtime it needs, and
+# HAVE_MMAP lets HarfBuzz memory-map font files instead of reading them
+# into RAM (Windows has its own mapping path built in).
+include_dirs = include_dirs + [os.path.join("harfbuzz_src", "src"),
+                               os.path.join("sheenbidi_src", "Headers"),
+                               os.path.join("sheenbidi_src", "Source")]
+define_macros = [("SB_CONFIG_UNITY", None)]
+if sys.platform == "win32":
+    define_macros.append(("_HAS_EXCEPTIONS", "0"))
+if sys.platform != "win32":
+    # HAVE_MMAP only switches HarfBuzz's mmap code on; the headers it needs
+    # (<sys/mman.h>, <unistd.h>: mmap, munmap, close) are included only with
+    # HAVE_SYS_MMAN_H / HAVE_UNISTD_H, which HarfBuzz's own build always sets
+    # together with it — without them hb-blob.cc doesn't compile.
+    define_macros += [("HAVE_MMAP", "1"), ("HAVE_SYS_MMAN_H", "1"), ("HAVE_UNISTD_H", "1")]
+    libraries = libraries + (["c++"] if sys.platform == "darwin" else ["stdc++"])
+
+# Prebuilt HarfBuzz / SheenBidi (see HBSB_SOURCES): DYNFONT_HBSB_DIR is the
+# hbsb CMake build dir (set by pyproject.toml's before-all on Linux/macOS);
+# on Windows it defaults to build_all.bat's hbsb/build_<arch>. Linked by
+# full path, so a system libharfbuzz can never be picked up instead.
+_hbsb_dir = os.environ.get("DYNFONT_HBSB_DIR", "")
+if not _hbsb_dir and sys.platform == "win32":
+    _hbsb_dir = os.path.join(_THIS_DIR_STR, "hbsb", "build_" + _ARCH_TAG)
+_lib_name = "{}.lib" if sys.platform == "win32" else "lib{}.a"
+_hbsb_libs = [os.path.join(_hbsb_dir, "lib", _lib_name.format(n))
+              for n in ("dynfont_harfbuzz", "dynfont_sheenbidi")] if _hbsb_dir else []
+if _hbsb_libs and all(os.path.isfile(p) for p in _hbsb_libs):
+    extra_objects = _hbsb_libs
+    print(f"[setup.py] linking prebuilt HarfBuzz + SheenBidi from {_hbsb_dir}")
+else:
+    extra_objects = []
+    SOURCES = SOURCES + HBSB_SOURCES
+
 extensions = [
     Extension(
         # Module name now reflects its location INSIDE the dynamic_font
@@ -187,14 +240,16 @@ extensions = [
         include_dirs=include_dirs,
         library_dirs=library_dirs,
         libraries=libraries,
+        define_macros=define_macros,
         extra_compile_args=extra_compile_args,
         extra_link_args=extra_link_args,
+        extra_objects=extra_objects,
     )
 ]
 
 setup(
     name="dynamic_font",
-    version="1.2.3.1",
+    version="1.2.4",
     packages=["dynamic_font"],
     # Bundles dynamic_font/assets/fonts/** into the wheel — these are
     # ONLY the OFL-licensed Noto family fonts (Sans/CJK/Color Emoji),
@@ -206,7 +261,12 @@ setup(
     # Apple Color Emoji) are used directly from the user's own system
     # instead of being bundled here, avoiding that licensing question
     # entirely rather than redistributing them.
-    package_data={"dynamic_font": ["assets/fonts/**/*"]},
+    # licenses/ holds the full license texts of everything statically
+    # linked (FreeType, libpng, zlib, HarfBuzz, SheenBidi) or bundled
+    # (Noto fonts); their licenses require shipping these with binaries.
+    # tools/ holds the .dfbmp bitmap font builder and viewer (HTML pages
+    # opened by `python -m dynamic_font -buildbitmap` / `-bitmapviewer`).
+    package_data={"dynamic_font": ["assets/fonts/**/*", "licenses/*", "tools/*"]},
     include_package_data=True,
     # include_package_data=True bundles EVERY file inside the package
     # directory into the wheel by default (confirmed via setuptools'
@@ -217,6 +277,7 @@ setup(
     # still needs and keeps these files, since it's what the from-
     # source build actually compiles from.
     exclude_package_data={"dynamic_font": ["*.c", "*.h", "*.pyx"]},
+    license_files=["LICENSE", "dynamic_font/licenses/*"],
     author="v2pro1990",
     author_email="v2pro1990@gmail.com",
     description="High-performance multilingual text & color emoji typography engine for Pygame and Pygame-CE",
@@ -247,9 +308,9 @@ setup(
         "Operating System :: MacOS",
     ],
     keywords=["pygame", "pygame-ce", "font", "text rendering", "emoji", "colrv1", "colrv0", "cbdt", "sbix", "harfbuzz", "freetype", "cython"],
-    install_requires=[
-        "uharfbuzz",
-    ],
+    # No runtime dependencies besides pygame / pygame-ce: FreeType and
+    # HarfBuzz are both compiled into the extension.
+    install_requires=[],
     ext_modules=cythonize(
         extensions,
         language_level="3",

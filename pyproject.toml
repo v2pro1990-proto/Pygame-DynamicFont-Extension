@@ -15,7 +15,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "dynamic-font"
-version = "1.2.3.1"
+version = "1.2.4"
 description = "High-performance multi-script text/emoji rendering engine (Cython + embedded FreeType) for pygame"
 readme = "README.md"
 requires-python = ">=3.8"
@@ -25,9 +25,7 @@ license = { text = "MIT" }
 # specific variant here would silently override that choice (this
 # table takes priority over setup.py's own install_requires, per
 # setuptools' pyproject.toml-first dependency resolution).
-dependencies = [
-    "uharfbuzz>=0.30.0",
-]
+dependencies = []   # FreeType and HarfBuzz are compiled into the extension
 
 [tool.cibuildwheel]
 # Build for CPython 3.8-3.14. 32-bit Windows (win32) IS supported —
@@ -69,7 +67,12 @@ archs = ["x86_64", "aarch64"]
 # same VER-2-13-3 tag used by build_all.bat) compiles clean and provides
 # FT_COLOR_H, confirmed by successfully compiling the real _core.c against
 # it after the system FreetType's version had failed on that exact symbol.
-before-all = "(dnf install -y cmake git libpng-devel zlib-devel || yum install -y cmake git libpng-devel zlib-devel || (apt-get update && apt-get install -y cmake git libpng-dev zlib1g-dev)) && git clone -b VER-2-13-3 --depth 1 https://github.com/freetype/freetype.git /tmp/freetype_src && cmake -B /tmp/freetype_src/build -S /tmp/freetype_src -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr -DCMAKE_POSITION_INDEPENDENT_CODE=ON -DFT_REQUIRE_ZLIB=ON -DFT_REQUIRE_PNG=ON && cmake --build /tmp/freetype_src/build -j4 && cmake --install /tmp/freetype_src/build"
+before-all = "(dnf install -y cmake git libpng-devel zlib-devel || yum install -y cmake git libpng-devel zlib-devel || (apt-get update && apt-get install -y cmake git libpng-dev zlib1g-dev)) && git clone -b VER-2-13-3 --depth 1 https://github.com/freetype/freetype.git /tmp/freetype_src && cmake -B /tmp/freetype_src/build -S /tmp/freetype_src -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr -DCMAKE_POSITION_INDEPENDENT_CODE=ON -DFT_REQUIRE_ZLIB=ON -DFT_REQUIRE_PNG=ON && cmake --build /tmp/freetype_src/build -j4 && cmake --install /tmp/freetype_src/build && cmake -S {project}/hbsb -B /tmp/hbsb_build -DCMAKE_BUILD_TYPE=Release && cmake --build /tmp/hbsb_build -j4"
+# HarfBuzz + SheenBidi (vendored in the repo) built ONCE per container into
+# static libraries by the last step above (hbsb/CMakeLists.txt) — every
+# wheel then links them instead of recompiling HarfBuzz; setup.py finds
+# them through DYNFONT_HBSB_DIR.
+environment = { DYNFONT_HBSB_DIR = "/tmp/hbsb_build" }
 
 [tool.cibuildwheel.macos]
 # Homebrew's own prebuilt freetype/libpng turned out to be built against
@@ -87,7 +90,7 @@ before-all = "(dnf install -y cmake git libpng-devel zlib-devel || yum install -
 # already do — removes this dependency on Homebrew's own SDK choice
 # entirely, letting -DCMAKE_OSX_DEPLOYMENT_TARGET set the real minimum
 # supported macOS version directly.
-before-all = "brew install cmake pkg-config && git clone -b v1.6.44 --depth 1 https://github.com/pnggroup/libpng.git /tmp/libpng_src && cmake -B /tmp/libpng_src/build -S /tmp/libpng_src -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/tmp/macdeps -DCMAKE_OSX_DEPLOYMENT_TARGET=11.0 -DCMAKE_POSITION_INDEPENDENT_CODE=ON -DPNG_SHARED=OFF -DPNG_STATIC=ON -DPNG_TESTS=OFF && cmake --build /tmp/libpng_src/build -j4 && cmake --install /tmp/libpng_src/build && git clone -b VER-2-13-3 --depth 1 https://github.com/freetype/freetype.git /tmp/freetype_src_mac && cmake -B /tmp/freetype_src_mac/build -S /tmp/freetype_src_mac -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/tmp/macdeps -DCMAKE_OSX_DEPLOYMENT_TARGET=11.0 -DCMAKE_POSITION_INDEPENDENT_CODE=ON -DCMAKE_PREFIX_PATH=/tmp/macdeps -DFT_REQUIRE_ZLIB=ON -DFT_REQUIRE_PNG=ON && cmake --build /tmp/freetype_src_mac/build -j4 && cmake --install /tmp/freetype_src_mac/build"
+before-all = "brew install cmake pkg-config && git clone -b v1.6.44 --depth 1 https://github.com/pnggroup/libpng.git /tmp/libpng_src && cmake -B /tmp/libpng_src/build -S /tmp/libpng_src -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/tmp/macdeps -DCMAKE_OSX_DEPLOYMENT_TARGET=11.0 -DCMAKE_POSITION_INDEPENDENT_CODE=ON -DPNG_SHARED=OFF -DPNG_STATIC=ON -DPNG_TESTS=OFF && cmake --build /tmp/libpng_src/build -j4 && cmake --install /tmp/libpng_src/build && git clone -b VER-2-13-3 --depth 1 https://github.com/freetype/freetype.git /tmp/freetype_src_mac && cmake -B /tmp/freetype_src_mac/build -S /tmp/freetype_src_mac -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/tmp/macdeps -DCMAKE_OSX_DEPLOYMENT_TARGET=11.0 -DCMAKE_POSITION_INDEPENDENT_CODE=ON -DCMAKE_PREFIX_PATH=/tmp/macdeps -DFT_REQUIRE_ZLIB=ON -DFT_REQUIRE_PNG=ON && cmake --build /tmp/freetype_src_mac/build -j4 && cmake --install /tmp/freetype_src_mac/build && cmake -S {project}/hbsb -B /tmp/hbsb_build -DCMAKE_BUILD_TYPE=Release -DCMAKE_OSX_DEPLOYMENT_TARGET=11.0 && cmake --build /tmp/hbsb_build -j4"
 # DYNFONT_DEPS_PREFIX (read directly by setup.py, bypassing pkg-config
 # entirely on macOS) rather than PKG_CONFIG_PATH — confirmed via a real
 # build that PKG_CONFIG_PATH alone was NOT reliably enough to stop
@@ -96,7 +99,9 @@ before-all = "brew install cmake pkg-config && git clone -b v1.6.44 --depth 1 ht
 # shared .dylib copies (with their own harfbuzz/glib/graphite2/brotli/
 # pcre2 dependency chain) instead of the from-source build made
 # specifically to avoid exactly that.
-environment = { MACOSX_DEPLOYMENT_TARGET = "11.0", DYNFONT_DEPS_PREFIX = "/tmp/macdeps" }
+# DYNFONT_HBSB_DIR: HarfBuzz + SheenBidi static libraries built once by the
+# last before-all step (see the Linux section).
+environment = { MACOSX_DEPLOYMENT_TARGET = "11.0", DYNFONT_DEPS_PREFIX = "/tmp/macdeps", DYNFONT_HBSB_DIR = "/tmp/hbsb_build" }
 
 [tool.cibuildwheel.windows]
 # ARM64 here is cross-compiled from the SAME Intel (AMD64) runner —
