@@ -29,7 +29,8 @@ jobs:
           python-version: ${{ matrix.python }}
 
       - name: Install dynamic-font ${{ inputs.version }} + pygame-ce (wheels only)
-        run: python -m pip install --only-binary=:all: "dynamic-font==${{ inputs.version }}" pygame-ce
+        run: |
+          python -m pip install --only-binary=:all: "dynamic-font==${{ inputs.version }}" pygame-ce
 
       - name: Smoke test
         # Run from outside the checkout so "import dynamic_font" loads the
