@@ -205,6 +205,20 @@ Median time per `render()` call, same machine, same fonts (Python 3.14,
 
 ---
 
+## 📦 Platforms & Download Size
+
+- **Same platforms as pygame-ce.** New wheels for 32-bit Linux (i686) and for
+  older systems: Linux wheels now need glibc 2.17+ (was 2.27+), and Intel Macs
+  macOS 10.13+ (10.15+ for Python 3.14; was 11.0+). Apple Silicon stays 11.0+.
+- **Wheels are about a third of their old size** (~21 MB instead of ~68 MB).
+  The bundled fonts no longer include a byte-for-byte duplicate of Noto Sans
+  CJK, two extra CJK files already covered by it, 16 fallback fonts that add
+  no character the others don't have (the "UI" variants and two Syriac
+  styles), or Noto Color Emoji's SVG table, which DynamicFont never used (it
+  draws the COLR table). Every character renders exactly as before.
+
+---
+
 ## 🛠 Internal / Build
 
 - **HarfBuzz 14.5.0 and SheenBidi 3.0.0 are compiled into the extension.**

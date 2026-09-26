@@ -38,7 +38,7 @@ and color emoji with no setup at all:
   dozens more writing systems. These are licensed under the
   [SIL Open Font License](https://openfontlicense.org/), which explicitly
   permits bundling and redistributing fonts with other software — so
-  they ship directly in the wheel, adding roughly 60MB.
+  they ship directly in the wheel, adding about 20MB to the download.
 * **`emoji_path`** (when not explicitly passed): auto-detects and uses
   your OS's own installed emoji font directly — Segoe UI Emoji on Windows,
   Apple Color Emoji on macOS, Noto Color Emoji on most Linux distros —

@@ -7,6 +7,10 @@ Copyright 2022 The Noto Project Authors (https://github.com/notofonts)
 Copyright © 2014, 2015 Adobe Systems Incorporated (http://www.adobe.com/).
 © 2014-2021 Adobe (http://www.adobe.com/).
 
+Noto Color Emoji is included with its SVG table removed (DynamicFont draws
+the COLR table; the SVG table was unused). Every other table, including the
+glyphs, COLR and CPAL, is unchanged.
+
 This Font Software is licensed under the SIL Open Font License, Version 1.1.
 This license is copied below, and is also available with a FAQ at:
 https://openfontlicense.org
