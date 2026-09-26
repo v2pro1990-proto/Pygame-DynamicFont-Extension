@@ -40,14 +40,18 @@ extern "C" {
  *                   that don't closely match any embedded strike.
  * out_rgba        : (output) RGBA buffer allocated via malloc() by this
  *                   function — CALLER MUST free() it after use.
- * out_w, out_h    : (output) the actual bitmap dimensions (may differ
- *                   from requested_size — the caller is responsible for
- *                   scaling the resulting surface if exact-size output
- *                   is required).
+ * out_w, out_h    : (output) the bitmap dimensions. When the chosen
+ *                   strike's height is more than 15% away from
+ *                   requested_size, the bitmap has already been resized
+ *                   so its height is requested_size (Lanczos-3, done on
+ *                   premultiplied alpha — no dark fringe); otherwise it
+ *                   is the strike bitmap 1:1.
  * out_top         : (output) device-pixel distance from the text baseline
- *                   UP to the TOP row of out_rgba (FreeType's bitmap_top).
+ *                   UP to the TOP row of out_rgba (FreeType's bitmap_top,
+ *                   scaled with the bitmap).
  * out_left        : (output) device-pixel distance from the glyph's pen
- *                   position to the LEFT edge of out_rgba (bitmap_left).
+ *                   position to the LEFT edge of out_rgba (bitmap_left,
+ *                   scaled with the bitmap).
  *
  * Returns: 0 on success, non-zero on error:
  *   1 = FT_Load_Glyph failed (font has no CBDT, or PNG support missing —

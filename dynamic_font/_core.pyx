@@ -2031,21 +2031,18 @@ cdef class DynamicFont:
         pygame.font as the final resort.
 
         CBDT bitmaps only exist at whatever fixed strike size(s) the font
-        embeds (e.g. only 128px for one common NotoColorEmoji build) —
-        render_cbdt_glyph() itself picks the closest available strike
-        (see cbdt_render.c), which will generally NOT match `size`
-        exactly. The mismatch is corrected here via smoothscale, so the
-        caller always gets back a surface sized for the requested `size`
-        — quality at sizes far from the embedded strike will be softer
-        than COLRv1/COLRv0's vector output, an inherent property of
-        bitmap-based color glyphs, not a bug in this renderer."""
+        embeds (e.g. only 109 ppem for NotoColorEmoji's CBDT build) —
+        render_cbdt_glyph() picks a strike and, when it is more than 15%
+        off, resizes it to `size` itself (Lanczos-3 on premultiplied alpha,
+        see cbdt_render.c). Far from the strike, detail is still limited by
+        the bitmap — softer than COLRv1/COLRv0's vector output — but without
+        the dark fringe a straight-alpha smoothscale used to add."""
         cdef int code = ord(ch)
         cdef unsigned int glyph_index
         cdef unsigned char* rgba_buf = NULL
         cdef int w = 0, h = 0, top = 0, left = 0
         cdef int result
         cdef object surf
-        cdef double scale
 
         self._ensure_emoji_face()
 
@@ -2069,25 +2066,6 @@ cdef class DynamicFont:
             return None, 0, 0
 
         surf = _rgba_to_surface(rgba_buf, w, h)
-
-        # The embedded strike's own pixel height rarely matches the
-        # requested `size` exactly (CBDT has no vector scaling). Only
-        # resize when the mismatch is large enough to matter — smoothscale
-        # (bilinear) measurably softens sharp cartoon-style edges even for
-        # SMALL scale factors (confirmed via direct sharpness measurement:
-        # a mere ~6% resize cut edge contrast by ~97%), so for a
-        # well-populated multi-strike font (close strikes only a few
-        # pixels apart, e.g. Apple Color Emoji's 12 strikes) skipping the
-        # unnecessary resize keeps CBDT output visibly crisp instead of
-        # blurring away exactly the quality multiple strikes are meant to
-        # preserve. Only scale when actually needed (sparse-strike fonts,
-        # or a size genuinely outside the embedded range).
-        if h > 0 and abs(h - size) > <int>(size * 0.15):
-            scale = <double>size / <double>h
-            surf = pygame.transform.smoothscale(surf, (max(1, <int>(w * scale)), max(1, <int>(h * scale))))
-            top = <int>(top * scale)
-            left = <int>(left * scale)
-
         return surf, top, left
 
     cdef tuple _render_cbdt_by_id(self, unsigned int glyph_id, int size):
@@ -2098,7 +2076,6 @@ cdef class DynamicFont:
         cdef int w = 0, h = 0, top = 0, left = 0
         cdef int result
         cdef object surf
-        cdef double scale
 
         if not self._emoji_has_cbdt or self._emoji_ft_face == NULL or glyph_id == 0:
             return None, 0, 0
@@ -2110,15 +2087,6 @@ cdef class DynamicFont:
             return None, 0, 0
 
         surf = _rgba_to_surface(rgba_buf, w, h)
-
-        # See _render_cbdt_emoji for why this only scales past a 15%
-        # mismatch threshold instead of on every non-exact match.
-        if h > 0 and abs(h - size) > <int>(size * 0.15):
-            scale = <double>size / <double>h
-            surf = pygame.transform.smoothscale(surf, (max(1, <int>(w * scale)), max(1, <int>(h * scale))))
-            top = <int>(top * scale)
-            left = <int>(left * scale)
-
         return surf, top, left
         
         

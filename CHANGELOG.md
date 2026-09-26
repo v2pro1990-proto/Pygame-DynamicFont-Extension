@@ -143,7 +143,7 @@ python -m dynamic_font -bitmapviewer    # see every glyph of a .dfbmp file
 
 ## 🐞 Bug Fixes
 
-The six fixes below change what gets drawn — here is the same input rendered
+The seven fixes below change what gets drawn — here is the same input rendered
 by v1.2.3 and by v1.2.4:
 
 ![Visual bug fixes](docs/v1.2.4/07_fixes_before_after.png)
@@ -161,6 +161,12 @@ by v1.2.3 and by v1.2.4:
 - **Changing a `^X` palette color didn't recolor text already rendered** —
   static text kept the colors it was first drawn with. Editing or replacing
   `RICH_PALETTE` now takes effect on the next `render()`.
+- **Bitmap (CBDT) color emoji looked smudged when shrunk.** Fonts such as the
+  Noto Color Emoji that Linux ships carry one large bitmap per emoji (109
+  ppem); shrinking it to text size averaged in the black of the transparent
+  surroundings and left a dark fringe. The bitmap is now shrunk in C with a
+  Lanczos-3 filter on premultiplied alpha — clean edges, and as sharp as a
+  bitmap that size allows.
 - Text with many script / color changes (a run per word) could silently drop
   runs past an internal limit.
 - A missing fallback font crashed `render()`; it now falls back cleanly.

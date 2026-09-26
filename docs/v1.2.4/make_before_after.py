@@ -1,11 +1,14 @@
 """Makes 07_fixes_before_after.png: the same input rendered by v1.2.3 and by
 v1.2.4, side by side, for the bug fixes that change what gets drawn.
 
-    python make_before_after.py --old DIR [--new DIR] [--out DIR]
+    python make_before_after.py --old DIR [--new DIR] [--cbdt FONT] [--out DIR]
 
---old DIR   a folder containing the v1.2.3 dynamic_font (e.g. a v1.2.3.x wheel
-            unzipped there, or its site-packages).
---new DIR   the v1.2.4 dynamic_font (default: the installed one).
+--old DIR    a folder containing the v1.2.3 dynamic_font (e.g. a v1.2.3.x wheel
+             unzipped there, or its site-packages).
+--new DIR    the v1.2.4 dynamic_font (default: the installed one).
+--cbdt FONT  a CBDT (PNG bitmap) color emoji font, e.g. NotoColorEmoji.ttf from
+             github.com/googlefonts/noto-emoji (the one Linux distributions
+             ship). Adds the CBDT emoji row; without it that row is left out.
 
 Each engine renders every case in its own Python process (two versions of
 the same module can't be imported side by side); this process then lays the
@@ -30,7 +33,10 @@ CASES = {
     "kern_sta": ("AVATAR Toyota WAVE", {}),
     # rendered with ^x = grey, then ^x changed to orange and rendered again (see render_cases)
     "palette":  ("^xLantern ^1festival", {}),
+    # rendered with the --cbdt font as emoji_path, at 26 px, shown 2x (see render_cases)
+    "cbdt":     ("😀🌕❤🚀🍉", {}),
 }
+CBDT_SIZE, CBDT_ZOOM = 26, 2
 ROWS = [
     ("lt_sign", "A '<' in the text swallowed everything up to the next tag", '"Giá < 5đ <bold={rẻ}>, a < b"'),
     ("bidi1", "Right-to-left sentences were laid out left-to-right", '"السعر 100 دولار"   (price 100 dollars)'),
@@ -40,10 +46,12 @@ ROWS = [
      '"AVATAR Toyota WAVE", dynamic=True'),
     ("palette", "Changing a ^X palette color didn't recolor text rendered before the change",
      'grey ^x rendered, then RICH_PALETTE["x"] = ORANGE'),
+    ("cbdt", "CBDT (bitmap) emoji shrunk from a big strike got a dark fringe and looked smudged",
+     f'NotoColorEmoji (CBDT), size={CBDT_SIZE}, zoom {CBDT_ZOOM}x'),
 ]
 
 
-def render_cases(engine_dir, out_dir, fallback_dir):
+def render_cases(engine_dir, out_dir, fallback_dir, cbdt_font):
     """Runs in the child process: renders every case with the engine in engine_dir."""
     sys.path.insert(0, engine_dir)
     os.environ.setdefault("SDL_VIDEODRIVER", "dummy")
@@ -58,6 +66,12 @@ def render_cases(engine_dir, out_dir, fallback_dir):
     if palette is None:
         palette = df._core.RICH_PALETTE
     for name, (text, kw) in CASES.items():
+        if name == "cbdt":
+            if cbdt_font:
+                e = df.DynamicFont("Segoe UI", fallback_name=os.path.join(fallback_dir, "NotoSansCJK-Regular.ttc"),
+                                   fallback_dir=fallback_dir, emoji_path=cbdt_font)
+                pygame.image.save(e.render(text, CBDT_SIZE), os.path.join(out_dir, name + ".png"))
+            continue
         if name == "palette":
             palette["x"] = (130, 130, 130)                   # grey
             f.render(text, 30, (240, 240, 240), **kw)        # drawn (and cached) once...
@@ -68,9 +82,9 @@ def render_cases(engine_dir, out_dir, fallback_dir):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--old", required=True); ap.add_argument("--new")
+    ap.add_argument("--old", required=True); ap.add_argument("--new"); ap.add_argument("--cbdt", default="")
     ap.add_argument("--out", default=HERE)
-    ap.add_argument("--_render", nargs=3, help=argparse.SUPPRESS)
+    ap.add_argument("--_render", nargs=4, help=argparse.SUPPRESS)
     args = ap.parse_args()
     if args._render:
         render_cases(*args._render)
@@ -92,7 +106,8 @@ def main():
     for tag, engine in (("old", args.old), ("new", new_dir)):
         dirs[tag] = os.path.join(tmp, tag); os.makedirs(dirs[tag])
         subprocess.run([sys.executable, os.path.abspath(__file__), "--old", args.old,
-                        "--_render", engine, dirs[tag], fallback_dir], check=True)
+                        "--_render", engine, dirs[tag], fallback_dir, args.cbdt], check=True)
+    rows = [r for r in ROWS if r[0] != "cbdt" or args.cbdt]
 
     # ---- the card
     BG, CARD, EDGE = (13, 15, 20), (22, 25, 33), (44, 49, 61)
@@ -117,7 +132,7 @@ def main():
 
     LABEL_W, COL_W, ROW_H, PAD = 430, 420, 104, 28
     W = PAD * 2 + LABEL_W + COL_W * 2
-    H = PAD * 2 + 52 + 40 + ROW_H * len(ROWS)
+    H = PAD * 2 + 52 + 40 + ROW_H * len(rows)
     img = pygame.Surface((W, H)); img.fill(BG)
     rect = pygame.Rect(PAD, PAD, W - PAD * 2, H - PAD * 2)
     pygame.draw.rect(img, CARD, rect, border_radius=12)
@@ -133,7 +148,7 @@ def main():
     UIB2.render_to(img, (rect.x + 22, hy + 12), "Bug", MUTED)
     UIB2.render_to(img, (x_old + 22, hy + 12), "v1.2.3 — before", OLD_C)
     UIB2.render_to(img, (x_new + 22, hy + 12), "v1.2.4 — after", NEW_C)
-    for i, (name, desc, code) in enumerate(ROWS):
+    for i, (name, desc, code) in enumerate(rows):
         y = hy + 40 + i * ROW_H
         pygame.draw.rect(img, ROW_A if i % 2 == 0 else ROW_B, (rect.x + 1, y, rect.w - 2, ROW_H))
         words, line, ly = desc.split(), "", y + 18   # description, wrapped
@@ -147,6 +162,11 @@ def main():
         img.blit(code_text(code), (rect.x + 22, ly + 22))
         for x0, tag in ((x_old, "old"), (x_new, "new")):
             s = pygame.image.load(os.path.join(dirs[tag], name + ".png")).convert_alpha()
+            if name == "cbdt":   # nearest-neighbour zoom on a light tile: the fringe shows on light backgrounds
+                s = s.subsurface(s.get_bounding_rect())
+                s = pygame.transform.scale(s, (s.get_width() * CBDT_ZOOM, s.get_height() * CBDT_ZOOM))
+                pygame.draw.rect(img, (236, 238, 242), (x0 + 12, y + (ROW_H - s.get_height()) // 2 - 6,
+                                                        s.get_width() + 20, s.get_height() + 20), border_radius=8)
             img.blit(s, (x0 + 22, y + (ROW_H - s.get_height()) // 2 + 4))
             if name == "kern_dyn":
                 static_w = pygame.image.load(os.path.join(dirs[tag], "kern_sta.png")).get_width()

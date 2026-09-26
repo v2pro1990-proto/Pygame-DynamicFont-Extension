@@ -8,7 +8,7 @@ pygame-ce, the v1.2.4 `dynamic_font` installed).
 | Script | Makes |
 | ----- | ----- |
 | `make_demos.py` | `00_banner.png` … `06_bitmap_font.png` — the code on the left of each card is what renders the text on its right |
-| `make_before_after.py --old DIR` | `07_fixes_before_after.png` — the same input rendered by v1.2.3 (`DIR`) and by v1.2.4 |
+| `make_before_after.py --old DIR --cbdt FONT` | `07_fixes_before_after.png` — the same input rendered by v1.2.3 (`DIR`) and by v1.2.4; `FONT` is a CBDT emoji font for the emoji row (`NotoColorEmoji.ttf` from [googlefonts/noto-emoji](https://github.com/googlefonts/noto-emoji)) |
 | `measure_bidi.py [--engine DIR]` | the right-to-left results (v1.2.3: 3 of 8, v1.2.4: 8 of 8) |
 | `benchmark.py [--engine DIR]` | the performance table |
 
