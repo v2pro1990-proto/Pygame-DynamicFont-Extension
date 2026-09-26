@@ -18,7 +18,9 @@ lib/
 lib64/
 parts/
 sdist/
-var/
+# Root only: unanchored "var/" also matched harfbuzz_src/src/OT/Var/ on
+# case-insensitive Windows and kept VARC.cc out of the repo.
+/var/
 wheels/
 share/python-wheels/
 *.egg-info/
