@@ -3002,7 +3002,7 @@ cdef class DynamicFont:
         cdef unsigned int a_shift, s_r, s_g, s_b, base_rgb, cur
         cdef int a, gi, bmp_x, bmp_y, alpha_val, py
         cdef int w_bmp, h_bmp, pitch, abs_pitch
-        cdef int ox, oy, x0, x1, y0, y1, clip_w, clip_h
+        cdef int ox, oy, x0, x1, y0, y1, clip_w, clip_h, clip_top
         cdef const unsigned char* bmp_ptr
         cdef const unsigned char* row_ptr
         cdef GlyphMeta* g_meta = lay.g_meta
@@ -3031,10 +3031,13 @@ cdef class DynamicFont:
             for a in range(256):
                 mapped_colors[a] = (<unsigned int>a << a_shift) | base_rgb
 
-        # Same clip a per-run surface (ink_w x final_h) blitted at dst_x had.
+        # Same clip a per-run surface (ink_w x final_h) blitted at dst_x had,
+        # widened vertically to the run's ink: marks reaching above the ascent
+        # or below final_h are drawn (the callers make the surface fit them).
         clip_w = dst_x + lay.ink_w
         if clip_w > dst_w: clip_w = dst_w
-        clip_h = dst_y + lay.final_h
+        clip_top = dst_y + (lay.ink_top if lay.ink_top < 0 else 0)
+        clip_h = dst_y + (lay.ink_bot if lay.ink_bot > lay.final_h else lay.final_h)
         if clip_h > dst_h: clip_h = dst_h
 
         for gi in range(lay.n):
@@ -3055,7 +3058,7 @@ cdef class DynamicFont:
             oy = dst_y + <int>floor(lay.baseline_y - g_meta[gi].top - g_meta[gi].y_off + 0.5)
             x0 = dst_x - ox if ox < dst_x else 0
             if ox + x0 < 0: x0 = -ox
-            y0 = dst_y - oy if oy < dst_y else 0
+            y0 = clip_top - oy if oy < clip_top else 0
             if oy + y0 < 0: y0 = -oy
             x1 = w_bmp if ox + w_bmp <= clip_w else clip_w - ox
             y1 = h_bmp if oy + h_bmp <= clip_h else clip_h - oy
@@ -3110,19 +3113,27 @@ cdef class DynamicFont:
                             px_view[ox + bmp_x, oy + bmp_y] = mapped_colors[alpha_val]
 
     cdef object _layout_to_surface(self, _RunLayout lay, object color):
-        """A single run as its own Surface (ink_w x final_h)."""
+        """A single run as its own Surface (ink_w x final_h). Glyphs that
+        reach above the font's ascent or below the surface (a fallback
+        font's stacked marks next to a tight .dfbmp line) make it taller
+        instead of being cut off."""
         cdef object surf, px_array
         cdef unsigned int[:, :] px_view
+        cdef int top = 0, h = lay.final_h
         if lay.surf is not None:
             # The layout (and its surface) is cached and reused: hand out a
             # copy so the caller can't alter what later renders draw.
             return lay.surf.copy()
-        surf = pygame.Surface((lay.ink_w, lay.final_h), pygame.SRCALPHA)
+        if lay.has_ink:
+            if lay.ink_top < 0: top = -lay.ink_top
+            if lay.ink_bot > h: h = lay.ink_bot
+        h += top
+        surf = pygame.Surface((lay.ink_w, h), pygame.SRCALPHA)
         if lay.n > 0:
             px_array = pygame.PixelArray(surf)
             px_view = px_array
-            self._draw_layout(lay, color, px_view, lay.ink_w, lay.final_h, 0, 0, surf.get_shifts(),
-                              0, lay.ink_w, lay.ink_top, lay.ink_bot - lay.ink_top, lay.size)
+            self._draw_layout(lay, color, px_view, lay.ink_w, h, 0, top, surf.get_shifts(),
+                              0, lay.ink_w, lay.ink_top + top, lay.ink_bot - lay.ink_top, lay.size)
             px_view = None
             px_array.close()
         return surf
@@ -3154,7 +3165,7 @@ cdef class DynamicFont:
         cdef object run, seq, box
         cdef _RunLayout lay
         cdef int line_y = 0, block_w = 1, block_h = 0, cur_x, line_w, line_base, line_h, dy
-        cdef int k, n_line, x, y, surf_h
+        cdef int k, n_line, x, y, surf_h, ink_t, ink_b, push
         cdef Py_ssize_t idx = 0, n_runs = len(runs)
         cdef int ink_top = 1 << 30, ink_bot = -(1 << 30)
         cdef dict tag_box = {}
@@ -3180,10 +3191,25 @@ cdef class DynamicFont:
                 if lay.size != size and lay.baseline_y > line_base:
                     line_base = lay.baseline_y
             line_h = fixed_h + (line_base - main_base)
-            cur_x = 0
+            # Glyphs reaching above this line or below it (a fallback font's
+            # stacked marks next to a tight .dfbmp line) push the line down /
+            # make it taller, as in a single-line render().
+            ink_t = 1 << 30
+            ink_b = -(1 << 30)
             for k in range(n_line):
                 lay = <_RunLayout>line[k][0]
                 dy = line_base - (lay.baseline_y if lay.size != size else main_base)
+                if lay.surf is None and lay.has_ink:
+                    if lay.ink_top + dy < ink_t: ink_t = lay.ink_top + dy
+                    if lay.ink_bot + dy > ink_b: ink_b = lay.ink_bot + dy
+            push = -ink_t if ink_t < 0 else 0
+            line_h += push
+            if ink_b + push > line_h:
+                line_h = ink_b + push
+            cur_x = 0
+            for k in range(n_line):
+                lay = <_RunLayout>line[k][0]
+                dy = line_base - (lay.baseline_y if lay.size != size else main_base) + push
                 if lay.size != size and dy + lay.final_h > line_h:
                     line_h = dy + lay.final_h
                 lays.append(lay)
@@ -3764,8 +3790,6 @@ cdef class DynamicFont:
             actual_final_w = (total_logic_w - lay.logic_w) + lay.ink_w
             if actual_final_w <= 0: actual_final_w = 1
 
-            final_surf = pygame.Surface((actual_final_w, line_h), pygame.SRCALPHA)
-            shifts = final_surf.get_shifts()
             # Vertical ink extent of the whole line (glyph runs only).
             ink_top = 1 << 30
             ink_bot = -(1 << 30)
@@ -3778,6 +3802,21 @@ cdef class DynamicFont:
             if ink_top >= ink_bot:
                 ink_top = 0
                 ink_bot = std_h
+            # Glyphs reaching above the line (a fallback font's stacked marks
+            # next to a tight .dfbmp line: "ẫ") push the whole line down;
+            # glyphs reaching below it make it taller. Nothing is cut off.
+            if ink_top < 0:
+                dy = -ink_top
+                for idx in range(n_surfs):
+                    run_dy[idx] = <int>run_dy[idx] + dy
+                line_h += dy
+                ink_top += dy
+                ink_bot += dy
+            if ink_bot > line_h:
+                line_h = ink_bot
+
+            final_surf = pygame.Surface((actual_final_w, line_h), pygame.SRCALPHA)
+            shifts = final_surf.get_shifts()
 
             # A gradient from a color TAG covers just that tag's text:
             # tag_seq -> [x0, x1, ink_top, ink_bot] over all runs of the tag.

@@ -51,6 +51,7 @@
   <span style="border-left:1px solid #555; height:20px; margin:0 4px;"></span>
   <button id="modeAdd">+ Add Cell</button>
   <button id="modeSelect">Select/Move</button>
+  <button id="btnDelete" title="Remove the selected glyph (Delete key)." disabled>Delete Selected</button>
   <span style="border-left:1px solid #555; height:20px; margin:0 4px;"></span>
   <button id="btnUndo">Undo Last Glyph</button>
   <button id="btnZoomIn">Zoom In (+)</button>
@@ -163,7 +164,7 @@ function setMode(m) {
   modeSelectBtn.classList.toggle("modeActive", m === "select");
   statusEl.textContent = (m === "add")
     ? "Click to place a cell (its top-left corner goes where you click)."
-    : "Click a glyph to select it; drag it or use the arrow keys (1 px) to move it. Delete removes it.";
+    : "Click a glyph to select it; drag it or use the arrow keys (1 px) to move it. Delete Selected (or the Delete key) removes it.";
   redrawOverlay();
 }
 modeAddBtn.onclick = () => setMode("add");
@@ -184,6 +185,7 @@ function redrawImage() {
 }
 
 function redrawOverlay() {
+  document.getElementById("btnDelete").disabled = selectedIndex < 0;
   overlayCtx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
   glyphs.forEach((box, i) => drawBox(box, i));
   if (mode === "add" && hoverXY && img) {
@@ -289,22 +291,32 @@ overlayCanvas.addEventListener("mouseup", () => {
   dragMode = null; dragBox = null; dragStartReal = null;
 });
 
+function deleteSelected() {
+  if (selectedIndex < 0 || selectedIndex >= glyphs.length) return;
+  const removed = glyphs.splice(selectedIndex, 1)[0];
+  selectedIndex = -1;
+  refreshGlyphList();
+  redrawOverlay();
+  statusEl.textContent = `Deleted '${removed.char}'. ${glyphs.length} glyph(s) defined.`;
+}
+document.getElementById("btnDelete").onclick = deleteSelected;
+
 // Arrow keys nudge the selected glyph's cell by 1 atlas pixel; Delete removes it.
 document.addEventListener("keydown", (evt) => {
   if (document.getElementById("dialogOverlay").style.display === "flex") return;
   if (evt.target && evt.target.tagName === "INPUT") return;
-  if (mode !== "select" || selectedIndex < 0) return;
-  const g = glyphs[selectedIndex];
-  const d = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] }[evt.key];
-  if (d) {
-    g.x = Math.max(0, g.x + d[0]);
-    g.y = Math.max(0, g.y + d[1]);
-  } else if (evt.key === "Delete") {
-    glyphs.splice(selectedIndex, 1);
-    selectedIndex = -1;
-  } else {
+  if (selectedIndex < 0) return;
+  if (evt.key === "Delete" || evt.key === "Backspace") {
+    evt.preventDefault();
+    deleteSelected();
     return;
   }
+  if (mode !== "select") return;
+  const g = glyphs[selectedIndex];
+  const d = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] }[evt.key];
+  if (!d) return;
+  g.x = Math.max(0, g.x + d[0]);
+  g.y = Math.max(0, g.y + d[1]);
   evt.preventDefault();
   refreshGlyphList();
   redrawOverlay();
